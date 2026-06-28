@@ -3,7 +3,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
-import { getFundByCode, getFunds, refreshFunds } from "./services/fundData.js";
+import {
+  getFundByCode,
+  getFundIntraday,
+  getFunds,
+  refreshFundIntraday,
+  refreshFunds
+} from "./services/fundData.js";
 import { getMarketIndices, getMarketKline, refreshMarketIndices } from "./services/marketData.js";
 import { runChat } from "./services/chat.js";
 import { buildMeta } from "./services/metadata.js";
@@ -31,6 +37,20 @@ app.post(
   "/api/refresh",
   asyncHandler(async (_req, res) => {
     res.json(toClientPayload(await refreshFunds()));
+  })
+);
+
+app.get(
+  "/api/funds/intraday",
+  asyncHandler(async (_req, res) => {
+    res.json(toClientIntraday(await getFundIntraday()));
+  })
+);
+
+app.post(
+  "/api/funds/intraday/refresh",
+  asyncHandler(async (_req, res) => {
+    res.json(toClientIntraday(await refreshFundIntraday()));
   })
 );
 
@@ -154,6 +174,10 @@ function toClientPayload(result) {
 }
 
 function toClientMarkets(result) {
+  const diagnostics = (result.errors || []).map((item) => `${item.id || "market"}: ${item.message}`);
+  const warnings = diagnostics.filter(isOptionalMarketWarning);
+  const errors = diagnostics.filter((item) => !isOptionalMarketWarning(item));
+
   return {
     indices: result.indices || [],
     meta: {
@@ -171,7 +195,45 @@ function toClientMarkets(result) {
         : "Yahoo Finance / Tencent ifzq / optional NeoData",
       caveat:
         "市场指数来自 Yahoo Finance、腾讯自选股及可选 NeoData；不同市场交易时区不同，行情与K线可能存在延迟。",
-      errors: (result.errors || []).map((item) => `${item.id || "market"}: ${item.message}`)
+      errors,
+      warnings
+    }
+  };
+}
+
+function toClientIntraday(result) {
+  const errors = result.data?.errors || [];
+  return {
+    items: (result.data?.items || []).map((item) => ({
+      code: item.code,
+      name: item.name,
+      ownership: item.ownership,
+      estimateNav: item.estimateNav ?? null,
+      estimateChangePct: item.estimateChangePct ?? null,
+      estimateTime: item.estimateTime ?? null,
+      lastNav: item.lastNav ?? null,
+      lastNavDate: item.lastNavDate ?? null,
+      status: item.status || "no_data",
+      source: item.source || "fundgz.1234567.com.cn",
+      sourceUrl: item.sourceUrl || "",
+      refreshedAt: item.refreshedAt || null,
+      error: item.error || null,
+      refreshError: item.refreshError || null
+    })),
+    meta: {
+      cacheStatus:
+        result.meta?.status === "ok"
+          ? "fresh"
+          : result.meta?.status === "partial"
+            ? "partial"
+            : result.meta?.status === "stale"
+              ? "stale"
+              : "empty",
+      refreshedAt: result.meta?.freshness?.cacheUpdatedAt || result.meta?.freshness?.fetchedAt || null,
+      sourceLabel: "Tiantian Fund intraday estimated NAV",
+      caveat:
+        "盘中数据来自天天基金净值估算，不是最终日净值，也不是可直接成交的实时价格；最终以基金公司收盘后披露净值为准。",
+      errors: errors.map((item) => `${item.code}: ${item.message}`)
     }
   };
 }
@@ -276,4 +338,8 @@ function buildCategoryNote(category, fund) {
     .join("、");
   const suffix = topNames ? `代表重仓：${topNames}。` : "";
   return `${category}。分类基于基金标签和前十大持仓，不只看基金名称。${suffix}`;
+}
+
+function isOptionalMarketWarning(message) {
+  return String(message).includes("NeoData unavailable");
 }

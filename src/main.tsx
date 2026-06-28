@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import ReactMarkdown from 'react-markdown';
 import {
   Activity,
   Bot,
@@ -73,6 +74,34 @@ type FundsResponse = {
   };
 };
 
+type FundIntradayRecord = {
+  code: string;
+  name: string | null;
+  ownership: 'owned' | 'watch';
+  estimateNav?: number | null;
+  estimateChangePct?: number | null;
+  estimateTime?: string | null;
+  lastNav?: number | null;
+  lastNavDate?: string | null;
+  status: 'ok' | 'stale' | 'no_data' | 'error';
+  source?: string;
+  sourceUrl?: string;
+  refreshedAt?: string | null;
+  error?: string | null;
+  refreshError?: string | null;
+};
+
+type FundIntradayResponse = {
+  items: FundIntradayRecord[];
+  meta: {
+    cacheStatus: 'fresh' | 'stale' | 'partial' | 'empty';
+    refreshedAt?: string | null;
+    sourceLabel: string;
+    caveat: string;
+    errors?: string[];
+  };
+};
+
 type MarketIndex = {
   id: string;
   name: string;
@@ -96,6 +125,7 @@ type MarketsResponse = {
     sourceLabel: string;
     caveat: string;
     errors?: string[];
+    warnings?: string[];
   };
 };
 
@@ -191,7 +221,13 @@ function toneClass(value?: number | null) {
   return 'muted';
 }
 
-function buildContext(funds: FundRecord[], markets: MarketIndex[], meta: FundsResponse['meta'], marketMeta?: MarketsResponse['meta']) {
+function buildContext(
+  funds: FundRecord[],
+  markets: MarketIndex[],
+  meta: FundsResponse['meta'],
+  marketMeta?: MarketsResponse['meta'],
+  intraday?: FundIntradayResponse | null
+) {
   const owned = funds.filter((fund) => fund.ownership === 'owned');
   const watch = funds.filter((fund) => fund.ownership === 'watch');
   const top = [...owned].sort((a, b) => (b.returns.oneMonth ?? -999) - (a.returns.oneMonth ?? -999))[0];
@@ -203,11 +239,17 @@ function buildContext(funds: FundRecord[], markets: MarketIndex[], meta: FundsRe
     acc[fund.category] = (acc[fund.category] ?? 0) + 1;
     return acc;
   }, {});
+  const intradayLeaders = [...(intraday?.items ?? [])]
+    .filter((item) => item.ownership === 'owned' && ['ok', 'stale'].includes(item.status))
+    .sort((a, b) => (b.estimateChangePct ?? -999) - (a.estimateChangePct ?? -999))
+    .slice(0, 5);
 
   return {
     fundCacheAt: meta.refreshedAt,
     marketCacheAt: marketMeta?.refreshedAt,
+    intradayCacheAt: intraday?.meta.refreshedAt,
     caveat: meta.caveat,
+    intradayCaveat: intraday?.meta.caveat,
     ownedFunds: owned.map((fund) => ({
       code: fund.code,
       name: fund.name,
@@ -233,6 +275,14 @@ function buildContext(funds: FundRecord[], markets: MarketIndex[], meta: FundsRe
       category: fund.category
     })),
     marketCoverage: marketCoverageSummary(markets),
+    intradayEstimates: intradayLeaders.map((item) => ({
+      code: item.code,
+      name: item.name,
+      estimateChangePct: item.estimateChangePct,
+      estimateNav: item.estimateNav,
+      estimateTime: item.estimateTime,
+      status: item.status
+    })),
     categoryCounts: categories,
     oneMonthLeader: top ? `${top.code} ${top.name} ${formatPercent(top.returns.oneMonth)}` : '暂无'
   };
@@ -275,6 +325,7 @@ function canOpenMarketKline(item: MarketIndex) {
 function App() {
   const [fundData, setFundData] = React.useState<FundsResponse | null>(null);
   const [marketData, setMarketData] = React.useState<MarketsResponse | null>(null);
+  const [intradayData, setIntradayData] = React.useState<FundIntradayResponse | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [refreshing, setRefreshing] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -301,12 +352,17 @@ function App() {
     setRefreshing(forceRefresh);
     setLoading(!forceRefresh);
     try {
-      const [fundPayload, marketPayload] = await Promise.all([
+      const [fundPayload, marketPayload, intradayPayload] = await Promise.all([
         requestJson<FundsResponse>(forceRefresh ? '/api/refresh' : '/api/funds', forceRefresh ? 'POST' : 'GET'),
-        requestJson<MarketsResponse>(forceRefresh ? '/api/markets/refresh' : '/api/markets/indices', forceRefresh ? 'POST' : 'GET')
+        requestJson<MarketsResponse>(forceRefresh ? '/api/markets/refresh' : '/api/markets/indices', forceRefresh ? 'POST' : 'GET'),
+        requestJson<FundIntradayResponse>(
+          forceRefresh ? '/api/funds/intraday/refresh' : '/api/funds/intraday',
+          forceRefresh ? 'POST' : 'GET'
+        )
       ]);
       setFundData(fundPayload);
       setMarketData(marketPayload);
+      setIntradayData(intradayPayload);
       const owned = fundPayload.funds.filter((fund) => fund.ownership === 'owned');
       setSelectedCode((current) => current ?? owned[0]?.code ?? fundPayload.funds[0]?.code ?? null);
     } catch (err) {
@@ -330,7 +386,7 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           question,
-          context: buildContext(fundData.funds, marketData?.indices ?? [], fundData.meta, marketData?.meta)
+          context: buildContext(fundData.funds, marketData?.indices ?? [], fundData.meta, marketData?.meta, intradayData)
         })
       });
       const payload = await response.json();
@@ -406,6 +462,8 @@ function App() {
         <MetricCard icon={<BrainCircuit />} label="短期过热提醒" value={`${hotFunds.length} 只`} note="近1月涨幅 ≥ 30%" />
       </section>
 
+      <IntradayPanel intraday={intradayData} funds={funds} />
+
       <section className="workspace-grid">
         <MarketPanel markets={markets} onOpenKline={setSelectedMarket} />
         <FundRankingPanel
@@ -448,6 +506,9 @@ async function requestJson<T>(endpoint: string, method: 'GET' | 'POST') {
 }
 
 function StatusAlerts({ fundMeta, marketMeta }: { fundMeta?: FundsResponse['meta']; marketMeta?: MarketsResponse['meta'] }) {
+  const hardErrors = [...(fundMeta?.errors ?? []), ...(marketMeta?.errors ?? [])];
+  const warnings = [...(marketMeta?.warnings ?? [])];
+
   return (
     <>
       {fundMeta && (
@@ -468,16 +529,27 @@ function StatusAlerts({ fundMeta, marketMeta }: { fundMeta?: FundsResponse['meta
           </span>
         </div>
       )}
-      {[...(fundMeta?.errors ?? []), ...(marketMeta?.errors ?? [])].length > 0 && (
+      {hardErrors.length > 0 && (
         <div className="alert warning stacked-alert">
           <ShieldAlert size={16} />
           <span>本次数据存在异常：</span>
           <ul>
-            {[...(fundMeta?.errors ?? []), ...(marketMeta?.errors ?? [])].slice(0, 8).map((item) => (
+            {hardErrors.slice(0, 8).map((item) => (
               <li key={item}>{item}</li>
             ))}
           </ul>
           {marketMeta?.cacheStatus === 'partial' && <span>市场数据为部分成功，市场相关结论已按不完整数据降级。</span>}
+        </div>
+      )}
+      {warnings.length > 0 && (
+        <div className="alert info stacked-alert">
+          <Database size={16} />
+          <span>可选市场数据源未配置，不影响基金基础数据：</span>
+          <ul>
+            {warnings.slice(0, 6).map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
         </div>
       )}
     </>
@@ -543,6 +615,54 @@ function MarketPanel({ markets, onOpenKline }: { markets: MarketIndex[]; onOpenK
           );
         })}
       </div>
+    </section>
+  );
+}
+
+function IntradayPanel({ intraday, funds }: { intraday: FundIntradayResponse | null; funds: FundRecord[] }) {
+  const items = (intraday?.items ?? [])
+    .filter((item) => item.ownership === 'owned')
+    .sort((a, b) => (b.estimateChangePct ?? -999) - (a.estimateChangePct ?? -999));
+  const byCode = new Map(funds.map((fund) => [fund.code, fund]));
+  const available = items.filter((item) => ['ok', 'stale'].includes(item.status) && item.estimateChangePct !== null && item.estimateChangePct !== undefined);
+  const leader = available[0];
+
+  return (
+    <section className="intraday-panel">
+      <div className="section-header">
+        <div>
+          <h2>交易日盘中估值</h2>
+          <p>天天基金净值估算，适合观察日内波动；最终净值以收盘后基金公司披露为准。</p>
+        </div>
+        <div className="intraday-summary">
+          <span>{intraday?.meta.refreshedAt || '暂无缓存'}</span>
+          <b>{leader ? `${leader.code} ${formatPercent(leader.estimateChangePct)}` : '暂无估值'}</b>
+        </div>
+      </div>
+      <div className="intraday-grid">
+        {items.map((item) => {
+          const fund = byCode.get(item.code);
+          const isUsable = item.status === 'ok' || item.status === 'stale';
+          return (
+            <article key={item.code} className={`intraday-card ${isUsable ? toneClass(item.estimateChangePct) : 'muted'}`}>
+              <div>
+                <b>{item.code}</b>
+                <span>{item.name || fund?.name || '暂无名称'}</span>
+              </div>
+              <strong className={toneClass(item.estimateChangePct)}>
+                {isUsable ? formatPercent(item.estimateChangePct) : '暂无估值'}
+              </strong>
+              <small>估算净值 {isUsable ? formatNumber(item.estimateNav, 4) : '暂无'}</small>
+              <small>上一净值 {formatNumber(item.lastNav, 4)} · {item.lastNavDate || '暂无日期'}</small>
+              <em>{item.status === 'stale' ? '旧估值' : item.status === 'ok' ? item.estimateTime || '暂无时间' : item.error || '该基金暂无盘中估值'}</em>
+              {fund?.category && <span className="mini-tag">{fund.category}</span>}
+            </article>
+          );
+        })}
+      </div>
+      <p className="source-note">
+        口径：{intraday?.meta.sourceLabel || 'Tiantian Fund intraday estimated NAV'}。开放式基金没有像股票那样的实时成交价，这里展示的是估算净值涨跌，可能与最终日净值有偏差。
+      </p>
     </section>
   );
 }
@@ -792,7 +912,23 @@ function ChatPanel({
       <div className="messages">
         {messages.map((message, index) => (
           <div key={`${message.role}-${index}`} className={`message ${message.role}`}>
-            {message.content}
+            {message.role === 'assistant' ? (
+              <div className="message-markdown">
+                <ReactMarkdown
+                  components={{
+                    a: ({ children, ...props }) => (
+                      <a {...props} target="_blank" rel="noreferrer">
+                        {children}
+                      </a>
+                    )
+                  }}
+                >
+                  {message.content}
+                </ReactMarkdown>
+              </div>
+            ) : (
+              message.content
+            )}
           </div>
         ))}
         {loading && <div className="message assistant">正在基于市场和基金数据整理...</div>}

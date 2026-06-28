@@ -193,6 +193,7 @@ h3 {
 .market-panel,
 .main-panel,
 .detail-panel,
+.intraday-panel,
 .panel-card {
   background: var(--panel);
   border: 1px solid var(--border);
@@ -250,6 +251,7 @@ h3 {
 .market-panel,
 .main-panel,
 .detail-panel,
+.intraday-panel,
 .panel-card {
   padding: 16px;
 }
@@ -340,6 +342,96 @@ input {
 .market-card:disabled:hover {
   border-color: var(--border);
   box-shadow: none;
+}
+
+.intraday-panel {
+  margin-bottom: 16px;
+}
+
+.intraday-summary {
+  color: var(--muted);
+  display: grid;
+  font-size: 12px;
+  gap: 4px;
+  justify-items: end;
+  min-width: 180px;
+}
+
+.intraday-summary b {
+  color: var(--ink);
+  font-size: 16px;
+}
+
+.intraday-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.intraday-card {
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  display: grid;
+  gap: 7px;
+  min-height: 160px;
+  padding: 12px;
+}
+
+.intraday-card.positive {
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+}
+
+.intraday-card.negative {
+  background: #fff7ed;
+  border-color: #fed7aa;
+}
+
+.intraday-card.hot {
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+
+.intraday-card div {
+  display: grid;
+  gap: 3px;
+}
+
+.intraday-card b,
+.intraday-card strong,
+.intraday-card span,
+.intraday-card small,
+.intraday-card em {
+  overflow-wrap: anywhere;
+}
+
+.intraday-card strong {
+  font-size: 22px;
+  line-height: 1.1;
+}
+
+.intraday-card span,
+.intraday-card small,
+.intraday-card em {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.intraday-card em {
+  font-style: normal;
+}
+
+.mini-tag {
+  align-self: end;
+  background: #eef6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  color: #1d4ed8 !important;
+  display: inline-flex;
+  font-weight: 700;
+  padding: 3px 7px;
+  width: fit-content;
 }
 
 .market-card b,
@@ -723,6 +815,69 @@ input {
   max-width: 90%;
 }
 
+.message-markdown {
+  white-space: normal;
+}
+
+.message-markdown > :first-child {
+  margin-top: 0;
+}
+
+.message-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.message-markdown h1,
+.message-markdown h2,
+.message-markdown h3 {
+  font-size: 14px;
+  margin: 8px 0 5px;
+}
+
+.message-markdown p,
+.message-markdown li {
+  line-height: 1.6;
+}
+
+.message-markdown p {
+  margin: 0 0 8px;
+}
+
+.message-markdown ul,
+.message-markdown ol {
+  margin: 0 0 8px;
+  padding-left: 18px;
+}
+
+.message-markdown code {
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  color: #0f172a;
+  font-size: 12px;
+  padding: 1px 4px;
+}
+
+.message-markdown pre {
+  background: #0f172a;
+  border-radius: 8px;
+  color: #e2e8f0;
+  overflow-x: auto;
+  padding: 10px;
+  white-space: pre;
+}
+
+.message-markdown pre code {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  padding: 0;
+}
+
+.message-markdown a {
+  color: var(--blue);
+}
+
 .chat-form {
   display: grid;
   gap: 8px;
@@ -879,6 +1034,10 @@ input {
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   }
 
+  .intraday-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .lower-grid {
     grid-template-columns: 1fr;
   }
@@ -900,7 +1059,8 @@ input {
   }
 
   .kpi-grid,
-  .market-card-grid {
+  .market-card-grid,
+  .intraday-grid {
     grid-template-columns: 1fr;
   }
 

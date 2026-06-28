@@ -10,8 +10,10 @@ const CACHE_DIR = path.join(DATA_DIR, "cache");
 const FUNDS_FILE = path.join(DATA_DIR, "funds.json");
 const PARSED_CACHE_FILE = path.join(CACHE_DIR, "funds-parsed.json");
 const RAW_CACHE_FILE = path.join(CACHE_DIR, "funds-raw.json");
+const INTRADAY_CACHE_FILE = path.join(CACHE_DIR, "funds-intraday.json");
 
 const DEFAULT_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const INTRADAY_CACHE_TTL_MS = 60 * 1000;
 
 export async function getFunds({ refresh = false } = {}) {
   if (!refresh) {
@@ -119,6 +121,106 @@ export async function refreshFunds() {
   };
 }
 
+export async function getFundIntraday({ refresh = false } = {}) {
+  if (!refresh) {
+    const cached = await readIntradayCache();
+    if (cached && !cached.stale) {
+      return {
+        data: cached.data,
+        meta: buildMeta({
+          sources: intradaySources(),
+          fetchedAt: cached.fetchedAt,
+          cacheUpdatedAt: cached.cacheUpdatedAt,
+          status: "ok",
+          caveats: [
+            "Intraday fund data is estimated NAV from Tiantian Fund, not the final daily NAV or a tradable real-time price."
+          ]
+        })
+      };
+    }
+  }
+
+  return refreshFundIntraday();
+}
+
+export async function refreshFundIntraday() {
+  await fs.mkdir(CACHE_DIR, { recursive: true });
+
+  const configuredFunds = await readConfiguredFunds();
+  const previousCache = await readIntradayCache({ includeStale: true });
+  const previousItems = previousCache?.data?.items || [];
+  const fetchedAt = new Date().toISOString();
+  const items = [];
+  const errors = [];
+
+  for (const fundConfig of configuredFunds) {
+    try {
+      const raw = await fetchFundIntradayRaw(fundConfig.code);
+      const parsed = parseFundIntraday(fundConfig, raw, fetchedAt);
+      items.push(parsed);
+      if (parsed.status !== "ok") {
+        errors.push({
+          code: fundConfig.code,
+          message: parsed.error || "Tiantian Fund did not return intraday valuation content."
+        });
+      }
+    } catch (error) {
+      const fallback = previousItems.find((item) => item.code === fundConfig.code);
+      errors.push({
+        code: fundConfig.code,
+        message: error.message
+      });
+      if (fallback) {
+        items.push({
+          ...fallback,
+          status: fallback.status === "ok" ? "stale" : fallback.status,
+          refreshError: error.message
+        });
+      } else {
+        items.push({
+          code: fundConfig.code,
+          name: fundConfig.name || null,
+          ownership: fundConfig.category === "watchlist" ? "watch" : "owned",
+          estimateNav: null,
+          estimateChangePct: null,
+          estimateTime: null,
+          lastNav: null,
+          lastNavDate: null,
+          status: "error",
+          source: "fundgz.1234567.com.cn",
+          sourceUrl: intradayUrl(fundConfig.code),
+          refreshedAt: fetchedAt,
+          error: error.message,
+          refreshError: error.message
+        });
+      }
+    }
+  }
+
+  const cacheUpdatedAt = new Date().toISOString();
+  const data = { items, errors };
+
+  await writeJson(INTRADAY_CACHE_FILE, {
+    fetchedAt,
+    cacheUpdatedAt,
+    data
+  });
+
+  return {
+    data,
+    meta: buildMeta({
+      sources: intradaySources(),
+      fetchedAt,
+      cacheUpdatedAt,
+      status: errors.length ? "partial" : "ok",
+      caveats: [
+        "Intraday fund data is estimated NAV from Tiantian Fund, not the final daily NAV or a tradable real-time price.",
+        ...errors.map((item) => `${item.code}: ${item.message}`)
+      ]
+    })
+  };
+}
+
 export async function readConfiguredFunds() {
   const payload = await fs.readFile(FUNDS_FILE, "utf8");
   const config = JSON.parse(payload);
@@ -151,6 +253,10 @@ async function fetchFundRaw(code) {
     profile,
     holdings
   };
+}
+
+async function fetchFundIntradayRaw(code) {
+  return fetchText(intradayUrl(code), "intraday");
 }
 
 async function fetchText(url, label) {
@@ -276,6 +382,62 @@ function parseHoldings(text) {
   return { reportDate, items };
 }
 
+function parseFundIntraday(config, text, fetchedAt) {
+  const match = text.match(/jsonpgz\(([\s\S]*)\)\s*;?\s*$/);
+  const payloadText = match?.[1]?.trim();
+
+  if (!payloadText || payloadText === "") {
+    return unavailableIntraday(config, fetchedAt, "Tiantian Fund returned an empty intraday valuation payload.");
+  }
+
+  let payload;
+  try {
+    payload = JSON.parse(payloadText);
+  } catch (error) {
+    return unavailableIntraday(config, fetchedAt, `Could not parse intraday valuation payload: ${error.message}`);
+  }
+
+  if (!payload?.fundcode) {
+    return unavailableIntraday(config, fetchedAt, "Tiantian Fund did not include a fund code in this valuation payload.");
+  }
+
+  return {
+    code: normalizeCode(payload.fundcode || config.code),
+    name: payload.name || config.name || null,
+    ownership: config.category === "watchlist" ? "watch" : "owned",
+    estimateNav: toNumber(payload.gsz),
+    estimateChangePct: toNumber(payload.gszzl),
+    estimateTime: payload.gztime || null,
+    lastNav: toNumber(payload.dwjz),
+    lastNavDate: payload.jzrq || null,
+    status: payload.gsz && payload.gztime ? "ok" : "no_data",
+    source: "fundgz.1234567.com.cn",
+    sourceUrl: intradayUrl(config.code),
+    refreshedAt: fetchedAt,
+    error: payload.gsz && payload.gztime ? null : "Tiantian Fund returned partial intraday valuation data.",
+    refreshError: null
+  };
+}
+
+function unavailableIntraday(config, fetchedAt, error) {
+  return {
+    code: config.code,
+    name: config.name || null,
+    ownership: config.category === "watchlist" ? "watch" : "owned",
+    estimateNav: null,
+    estimateChangePct: null,
+    estimateTime: null,
+    lastNav: null,
+    lastNavDate: null,
+    status: "no_data",
+    source: "fundgz.1234567.com.cn",
+    sourceUrl: intradayUrl(config.code),
+    refreshedAt: fetchedAt,
+    error,
+    refreshError: null
+  };
+}
+
 function latestAssetAllocation(assetAllocation) {
   const empty = {
     reportDate: null,
@@ -312,6 +474,24 @@ async function readParsedCache() {
       ...payload,
       cacheUpdatedAt: payload.cacheUpdatedAt || stat.mtime.toISOString(),
       stale: ageMs > DEFAULT_CACHE_TTL_MS
+    };
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function readIntradayCache({ includeStale = false } = {}) {
+  try {
+    const stat = await fs.stat(INTRADAY_CACHE_FILE);
+    const payload = JSON.parse(await fs.readFile(INTRADAY_CACHE_FILE, "utf8"));
+    const ageMs = Date.now() - stat.mtimeMs;
+    return {
+      ...payload,
+      cacheUpdatedAt: payload.cacheUpdatedAt || stat.mtime.toISOString(),
+      stale: !includeStale && ageMs > INTRADAY_CACHE_TTL_MS
     };
   } catch (error) {
     if (error.code === "ENOENT") {
@@ -400,6 +580,17 @@ function formatChinaDate(date) {
   })
     .format(date)
     .replaceAll("/", "");
+}
+
+function intradayUrl(code) {
+  return `https://fundgz.1234567.com.cn/js/${encodeURIComponent(normalizeCode(code))}.js?rt=${Date.now()}`;
+}
+
+function intradaySources() {
+  return {
+    ...SOURCE_URLS,
+    intradayEstimate: "https://fundgz.1234567.com.cn/js/{code}.js"
+  };
 }
 
 async function writeJson(file, payload) {

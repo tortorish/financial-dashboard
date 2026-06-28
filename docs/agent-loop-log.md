@@ -90,3 +90,30 @@ Developer 修复：
 
 - NeoData 本机脚本未安装，所以 5 个中国科技/芯片相关指数暂不可用；页面明确显示异常，不把它伪装成实时数据。
 - AI 输出仍是解释辅助，不构成交易建议。
+
+## Round 4 / Maintenance
+
+截图：
+
+- `docs/screenshots/dashboard-intraday-v2.png`
+
+Critic 主要意见：
+
+- `NeoData unavailable: query script is not installed` 属于可选市场数据源未配置，不应该和真实抓取失败混在“本次数据存在异常”中。
+- 用户需要看到交易日内这些基金的波动，但开放式基金没有股票式实时成交价，界面必须明确这是天天基金盘中净值估算。
+- MiniMax 返回 Markdown 时，AI 协作面板直接显示原始文本，阅读体验差。
+
+Developer 修复：
+
+- 市场接口把 NeoData 未配置拆到 `warnings`，前端单独显示“可选市场数据源未配置”，真正的市场抓取失败仍保留在异常提示。
+- 新增 `GET /api/funds/intraday` 和 `POST /api/funds/intraday/refresh`，抓取天天基金 `fundgz.1234567.com.cn` 盘中净值估算，并写入独立短缓存。
+- 前端新增“交易日盘中估值”模块，只展示已买基金；估值缺失显示“暂无估值”，不阻塞其它基金。
+- AI 协作消息接入 `react-markdown`，支持标题、列表、代码块和链接渲染，浏览器端仍不暴露 API key。
+
+验证：
+
+- `npm run build` 通过。
+- 盘中估值接口返回 `items=17`，其中 `ok=16`、`no_data=1`；已买基金页面卡片数为 8。
+- 市场接口返回 `errors=[]`，NeoData 未配置进入 `warnings`；当前另有 `smh: fetch failed` 被正确保留为真实异常。
+- 浏览器桌面检查：新模块可见，Markdown 容器生效。
+- 375px 移动检查：`scrollWidth=375`、`clientWidth=375`，无横向溢出。
