@@ -1,0 +1,98 @@
+[
+  {
+    "id": "ixic",
+    "name": "纳斯达克综合指数",
+    "symbol": ".IXIC.US",
+    "category": "us_broad",
+    "quoteSource": { "type": "yahoo", "symbol": "^IXIC" },
+    "klineSource": { "type": "yahoo", "symbol": "^IXIC" }
+  },
+  {
+    "id": "inx",
+    "name": "标普500",
+    "symbol": ".INX.US",
+    "category": "us_broad",
+    "quoteSource": { "type": "yahoo", "symbol": "^GSPC" },
+    "klineSource": { "type": "yahoo", "symbol": "^GSPC" }
+  },
+  {
+    "id": "soxx",
+    "name": "费城半导体ETF (SOXX)",
+    "symbol": "SOXX.US",
+    "category": "us_chip",
+    "quoteSource": { "type": "yahoo", "symbol": "SOXX" },
+    "klineSource": { "type": "yahoo", "symbol": "SOXX" }
+  },
+  {
+    "id": "smh",
+    "name": "半导体ETF (SMH)",
+    "symbol": "SMH.US",
+    "category": "us_chip",
+    "quoteSource": { "type": "yahoo", "symbol": "SMH" },
+    "klineSource": { "type": "yahoo", "symbol": "SMH" }
+  },
+  {
+    "id": "kc50",
+    "name": "科创50",
+    "symbol": "000688.SH",
+    "category": "cn_tech",
+    "quoteSource": { "type": "tencent", "code": "sh000688" },
+    "klineSource": { "type": "tencent", "code": "sh000688" }
+  },
+  {
+    "id": "cyb",
+    "name": "创业板指",
+    "symbol": "399006.SZ",
+    "category": "cn_tech",
+    "quoteSource": { "type": "tencent", "code": "sz399006" },
+    "klineSource": { "type": "tencent", "code": "sz399006" }
+  },
+  {
+    "id": "cninternet",
+    "name": "中国互联网",
+    "symbol": "H11136.CS",
+    "category": "cn_tech",
+    "quoteSource": { "type": "neodata", "query": "中国互联网H11136 行情" },
+    "klineSource": { "type": "neodata", "query": "中国互联网H11136 历史走势" }
+  },
+  {
+    "id": "cntech",
+    "name": "中证科技",
+    "symbol": "931186.CS",
+    "category": "cn_tech",
+    "quoteSource": { "type": "neodata", "query": "中证科技931186 行情" },
+    "klineSource": { "type": "neodata", "query": "中证科技931186 历史走势" }
+  },
+  {
+    "id": "csi_semi",
+    "name": "半导体(中证)",
+    "symbol": "H30184.CS",
+    "category": "cn_chip",
+    "quoteSource": { "type": "neodata", "query": "半导体指数 行情" },
+    "klineSource": { "type": "neodata", "query": "半导体指数 历史走势" }
+  },
+  {
+    "id": "cssc",
+    "name": "中华半导体芯片",
+    "symbol": "990001.CS",
+    "category": "cn_chip",
+    "quoteSource": { "type": "neodata", "query": "中华半导体芯片990001 行情" },
+    "klineSource": { "type": "neodata", "query": "中华半导体芯片990001 历史走势" }
+  },
+  {
+    "id": "cschip",
+    "name": "国证芯片",
+    "symbol": "980017.SZ",
+    "category": "cn_chip",
+    "quoteSource": { "type": "neodata", "query": "国证芯片980017 行情" },
+    "klineSource": { "type": "neodata", "query": "国证芯片980017 历史走势" }
+  },
+  {
+    "id": "hstech",
+    "name": "恒生科技",
+    "symbol": "HSTECH.HK",
+    "category": "hk_tech",
+    "quoteSource": { "type": "tencent", "code": "hkHSTECH" },
+    "klineSource": { "type": "tencent", "code": "hkHSTECH" }
+  }
+]

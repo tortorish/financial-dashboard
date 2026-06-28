@@ -1,0 +1,91 @@
+{
+  "owned": [
+    {
+      "code": "016237",
+      "category": "owned",
+      "theme": "数字经济/科技成长"
+    },
+    {
+      "code": "020722",
+      "category": "owned",
+      "theme": "AI算力/CPO"
+    },
+    {
+      "code": "025209",
+      "category": "owned",
+      "theme": "存储芯片"
+    },
+    {
+      "code": "016665",
+      "category": "owned",
+      "theme": "全球AI硬件"
+    },
+    {
+      "code": "006503",
+      "category": "owned",
+      "theme": "集成电路/CPO"
+    },
+    {
+      "code": "005844",
+      "category": "owned",
+      "theme": "半导体设备"
+    },
+    {
+      "code": "021511",
+      "category": "owned",
+      "theme": "半导体产业"
+    },
+    {
+      "code": "018815",
+      "category": "owned",
+      "theme": "核心优势/存储"
+    }
+  ],
+  "watchlist": [
+    {
+      "code": "159039",
+      "category": "watchlist",
+      "theme": "机器人ETF"
+    },
+    {
+      "code": "516520",
+      "category": "watchlist",
+      "theme": "智能驾驶ETF"
+    },
+    {
+      "code": "159720",
+      "category": "watchlist",
+      "theme": "智能车ETF"
+    },
+    {
+      "code": "002168",
+      "category": "watchlist",
+      "theme": "智能汽车"
+    },
+    {
+      "code": "001790",
+      "category": "watchlist",
+      "theme": "智能汽车"
+    },
+    {
+      "code": "005729",
+      "category": "watchlist",
+      "theme": "人工智能"
+    },
+    {
+      "code": "005962",
+      "category": "watchlist",
+      "theme": "人工智能"
+    },
+    {
+      "code": "000793",
+      "category": "watchlist",
+      "theme": "高端制造"
+    },
+    {
+      "code": "002345",
+      "category": "watchlist",
+      "theme": "高端制造"
+    }
+  ]
+}
