@@ -38,8 +38,12 @@ export async function getFunds({ refresh = false } = {}) {
   return refreshFunds();
 }
 
-export async function getFundByCode(code) {
+export async function getFundByCode(code, { refresh = false } = {}) {
   const normalized = normalizeCode(code);
+  if (refresh) {
+    return refreshFundByCode(normalized);
+  }
+
   const result = await getFunds();
   const fund = result.data.funds.find((item) => item.code === normalized);
 
@@ -57,6 +61,52 @@ export async function getFundByCode(code) {
   return {
     data: fund,
     meta: result.meta
+  };
+}
+
+export async function refreshFundByCode(code) {
+  await fs.mkdir(CACHE_DIR, { recursive: true });
+
+  const normalized = normalizeCode(code);
+  const configuredFunds = await readConfiguredFunds();
+  const fundConfig = configuredFunds.find((item) => item.code === normalized);
+  const previousCache = await readParsedCache();
+  const previousFunds = previousCache?.data?.funds || [];
+
+  if (!fundConfig) {
+    return {
+      data: null,
+      meta: buildMeta({
+        status: "not_found",
+        caveats: [`Fund code ${normalized} is not configured in data/funds.json.`]
+      })
+    };
+  }
+
+  const fetchedAt = new Date().toISOString();
+  const raw = await fetchFundRaw(fundConfig.code);
+  const parsed = parseFund(fundConfig, raw, fetchedAt);
+  const nextFunds = upsertByCode(previousFunds, parsed);
+  const cacheUpdatedAt = new Date().toISOString();
+  const data = {
+    funds: nextFunds,
+    groups: summarizeGroups(nextFunds),
+    errors: []
+  };
+
+  await writeJson(PARSED_CACHE_FILE, {
+    fetchedAt: previousCache?.fetchedAt || fetchedAt,
+    cacheUpdatedAt,
+    data
+  });
+
+  return {
+    data: parsed,
+    meta: buildMeta({
+      fetchedAt,
+      cacheUpdatedAt,
+      status: "ok"
+    })
   };
 }
 
@@ -300,10 +350,20 @@ function parseFund(config, raw, fetchedAt) {
       date: baseInfo.FSRQ || null
     },
     returns: {
-      oneMonth: toNumber(profile.returns.syl_1y),
-      threeMonths: toNumber(profile.returns.syl_3y),
-      sixMonths: toNumber(profile.returns.syl_6y),
-      oneYear: toNumber(profile.returns.syl_1n)
+      oneMonth: firstNumber(profile.returns.syl_1y, profile.fallbackReturns.oneMonth),
+      threeMonths: firstNumber(profile.returns.syl_3y, profile.fallbackReturns.threeMonths),
+      sixMonths: firstNumber(profile.returns.syl_6y, profile.fallbackReturns.sixMonths),
+      oneYear: firstNumber(profile.returns.syl_1n, profile.fallbackReturns.oneYear),
+      twoYears: firstNumber(profile.returns.syl_2n, profile.fallbackReturns.twoYears),
+      sinceAvailable: profile.fallbackReturns.sinceAvailable
+    },
+    returnSource: {
+      oneMonth: profile.returns.syl_1y ? "profile" : profile.fallbackReturns.oneMonth !== null ? "netWorthTrend" : null,
+      threeMonths: profile.returns.syl_3y ? "profile" : profile.fallbackReturns.threeMonths !== null ? "netWorthTrend" : null,
+      sixMonths: profile.returns.syl_6y ? "profile" : profile.fallbackReturns.sixMonths !== null ? "netWorthTrend" : null,
+      oneYear: profile.returns.syl_1n ? "profile" : profile.fallbackReturns.oneYear !== null ? "netWorthTrend" : null,
+      twoYears: profile.returns.syl_2n ? "profile" : profile.fallbackReturns.twoYears !== null ? "netWorthTrend" : null,
+      sinceAvailable: profile.fallbackReturns.sinceAvailable !== null ? "netWorthTrend" : null
     },
     assetAllocation: {
       reportDate: latestAllocation.reportDate,
@@ -339,17 +399,22 @@ function parseSearch(text) {
 }
 
 function parseProfile(text) {
+  const netWorthTrend = matchJsonVar(text, "Data_netWorthTrend") || [];
   return {
     name: matchStringVar(text, "fS_name"),
     code: matchStringVar(text, "fS_code"),
     returns: {
       syl_1n: matchStringVar(text, "syl_1n"),
+      syl_2n: matchStringVar(text, "syl_2n"),
       syl_6y: matchStringVar(text, "syl_6y"),
       syl_3y: matchStringVar(text, "syl_3y"),
       syl_1y: matchStringVar(text, "syl_1y")
     },
+    fallbackReturns: calculateReturnsFromTrend(netWorthTrend),
+    returnSource: netWorthTrend.length ? "netWorthTrend" : "profileVariables",
     assetAllocation: matchJsonVar(text, "Data_assetAllocation") || null,
-    currentManagers: matchJsonVar(text, "Data_currentFundManager") || []
+    currentManagers: matchJsonVar(text, "Data_currentFundManager") || [],
+    netWorthTrend
   };
 }
 
@@ -465,6 +530,66 @@ function latestAssetAllocation(assetAllocation) {
   };
 }
 
+function calculateReturnsFromTrend(trend) {
+  const empty = {
+    oneMonth: null,
+    threeMonths: null,
+    sixMonths: null,
+    oneYear: null,
+    twoYears: null,
+    sinceAvailable: null
+  };
+
+  const points = (trend || [])
+    .map((item) => ({
+      x: Number(item.x),
+      y: toNumber(item.y)
+    }))
+    .filter((item) => Number.isFinite(item.x) && item.y !== null)
+    .sort((left, right) => left.x - right.x);
+
+  if (points.length < 2) {
+    return empty;
+  }
+
+  const latest = points[points.length - 1];
+  return {
+    oneMonth: returnSince(points, latest, 30),
+    threeMonths: returnSince(points, latest, 91),
+    sixMonths: returnSince(points, latest, 182),
+    oneYear: returnSince(points, latest, 365),
+    twoYears: returnSince(points, latest, 730),
+    sinceAvailable: returnBetween(points[0], latest)
+  };
+}
+
+function returnSince(points, latest, days) {
+  const target = latest.x - days * 24 * 60 * 60 * 1000;
+  const start = [...points].reverse().find((item) => item.x <= target);
+  if (!start?.y || !latest.y) {
+    return null;
+  }
+
+  return round(((latest.y - start.y) / start.y) * 100, 2);
+}
+
+function returnBetween(start, latest) {
+  if (!start?.y || !latest?.y || start.x === latest.x) {
+    return null;
+  }
+
+  return round(((latest.y - start.y) / start.y) * 100, 2);
+}
+
+function upsertByCode(items, nextItem) {
+  const index = items.findIndex((item) => item.code === nextItem.code);
+  if (index === -1) {
+    return [...items, nextItem];
+  }
+
+  return items.map((item, itemIndex) => (itemIndex === index ? nextItem : item));
+}
+
 async function readParsedCache() {
   try {
     const stat = await fs.stat(PARSED_CACHE_FILE);
@@ -552,6 +677,16 @@ function toNumber(value) {
   const normalized = String(value).replace(/,/g, "").replace(/%/g, "").trim();
   const number = Number(normalized);
   return Number.isFinite(number) ? number : null;
+}
+
+function firstNumber(...values) {
+  for (const value of values) {
+    const number = toNumber(value);
+    if (number !== null) {
+      return number;
+    }
+  }
+  return null;
 }
 
 function round(value, digits) {

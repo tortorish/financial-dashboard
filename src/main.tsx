@@ -40,7 +40,10 @@ type FundRecord = {
     threeMonths?: number | null;
     sixMonths?: number | null;
     oneYear?: number | null;
+    twoYears?: number | null;
+    sinceAvailable?: number | null;
   };
+  returnSource?: Record<string, string | null>;
   allocation: {
     stock?: number | null;
     cash?: number | null;
@@ -72,6 +75,11 @@ type FundsResponse = {
     caveat: string;
     errors?: string[];
   };
+};
+
+type FundDetailResponse = {
+  fund: FundRecord;
+  meta: FundsResponse['meta'];
 };
 
 type FundIntradayRecord = {
@@ -258,6 +266,7 @@ function buildContext(
       threeMonths: fund.returns.threeMonths,
       sixMonths: fund.returns.sixMonths,
       oneYear: fund.returns.oneYear,
+      twoYears: fund.returns.twoYears,
       top10Weight: fund.top10Weight,
       topHoldings: fund.topHoldings.slice(0, 5).map((holding) => `${holding.stockName}${holding.weight ?? ''}%`)
     })),
@@ -272,7 +281,11 @@ function buildContext(
     watchFunds: watch.map((fund) => ({
       code: fund.code,
       name: fund.name,
-      category: fund.category
+      category: fund.category,
+      oneMonth: fund.returns.oneMonth,
+      threeMonths: fund.returns.threeMonths,
+      oneYear: fund.returns.oneYear,
+      twoYears: fund.returns.twoYears
     })),
     marketCoverage: marketCoverageSummary(markets),
     intradayEstimates: intradayLeaders.map((item) => ({
@@ -333,6 +346,10 @@ function App() {
   const [sortKey, setSortKey] = React.useState<'oneMonth' | 'threeMonths' | 'sixMonths' | 'oneYear' | 'top10Weight'>('oneMonth');
   const [selectedCode, setSelectedCode] = React.useState<string | null>(null);
   const [selectedMarket, setSelectedMarket] = React.useState<MarketIndex | null>(null);
+  const [selectedWatchCode, setSelectedWatchCode] = React.useState<string | null>(null);
+  const [watchDetail, setWatchDetail] = React.useState<FundRecord | null>(null);
+  const [watchLoading, setWatchLoading] = React.useState(false);
+  const [watchError, setWatchError] = React.useState<string | null>(null);
   const [chatInput, setChatInput] = React.useState('');
   const [chatError, setChatError] = React.useState<string | null>(null);
   const [chatMessages, setChatMessages] = React.useState<ChatMessage[]>([
@@ -364,7 +381,10 @@ function App() {
       setMarketData(marketPayload);
       setIntradayData(intradayPayload);
       const owned = fundPayload.funds.filter((fund) => fund.ownership === 'owned');
+      const watch = fundPayload.funds.filter((fund) => fund.ownership === 'watch');
       setSelectedCode((current) => current ?? owned[0]?.code ?? fundPayload.funds[0]?.code ?? null);
+      setSelectedWatchCode((current) => current ?? watch[0]?.code ?? null);
+      setWatchDetail((current) => current ?? watch[0] ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载失败');
     } finally {
@@ -404,6 +424,31 @@ function App() {
       ]);
     } finally {
       setChatLoading(false);
+    }
+  }
+
+  async function loadWatchFund(code: string, refresh = true) {
+    setSelectedWatchCode(code);
+    setWatchError(null);
+    setWatchLoading(true);
+    try {
+      const endpoint = refresh ? `/api/funds/${code}/refresh` : `/api/funds/${code}`;
+      const payload = await requestJson<FundDetailResponse>(endpoint, refresh ? 'POST' : 'GET');
+      setWatchDetail(payload.fund);
+      setFundData((current) => {
+        if (!current) return current;
+        const exists = current.funds.some((fund) => fund.code === payload.fund.code);
+        return {
+          ...current,
+          funds: exists
+            ? current.funds.map((fund) => (fund.code === payload.fund.code ? payload.fund : fund))
+            : [...current.funds, payload.fund]
+        };
+      });
+    } catch (err) {
+      setWatchError(err instanceof Error ? err.message : '观察基金刷新失败');
+    } finally {
+      setWatchLoading(false);
     }
   }
 
@@ -482,7 +527,14 @@ function App() {
 
       <section className="lower-grid">
         <RiskPanel funds={ownedFunds} markets={markets} />
-        <FuturePanel watchFunds={funds.filter((fund) => fund.ownership === 'watch')} />
+        <FuturePanel
+          watchFunds={funds.filter((fund) => fund.ownership === 'watch')}
+          selectedCode={selectedWatchCode}
+          detail={watchDetail}
+          loading={watchLoading}
+          error={watchError}
+          onSelect={loadWatchFund}
+        />
         <ChatPanel
           messages={chatMessages}
           input={chatInput}
@@ -853,7 +905,21 @@ function RiskItem({ title, value, text }: { title: string; value: string; text: 
   );
 }
 
-function FuturePanel({ watchFunds }: { watchFunds: FundRecord[] }) {
+function FuturePanel({
+  watchFunds,
+  selectedCode,
+  detail,
+  loading,
+  error,
+  onSelect
+}: {
+  watchFunds: FundRecord[];
+  selectedCode: string | null;
+  detail: FundRecord | null;
+  loading: boolean;
+  error: string | null;
+  onSelect: (code: string, refresh?: boolean) => void;
+}) {
   return (
     <section className="panel-card future-panel">
       <h2><BrainCircuit size={18} /> 未来展望：Physical AI</h2>
@@ -869,15 +935,85 @@ function FuturePanel({ watchFunds }: { watchFunds: FundRecord[] }) {
       </div>
       <h3>观察池</h3>
       <div className="watch-list">
-        {watchFunds.slice(0, 6).map((fund) => (
-          <div key={fund.code}>
+        {watchFunds.map((fund) => (
+          <button
+            key={fund.code}
+            className={selectedCode === fund.code ? 'selected' : ''}
+            onClick={() => onSelect(fund.code, true)}
+            disabled={loading && selectedCode === fund.code}
+          >
             <b>{fund.code}</b>
             <span><em>观察/未持有</em>{fund.name}</span>
+            <small>{fund.category}</small>
+            <strong className={toneClass(fund.returns.oneMonth)}>{formatPercent(fund.returns.oneMonth)}</strong>
+          </button>
+        ))}
+      </div>
+      {error && <div className="chat-error">观察基金刷新失败：{error}</div>}
+      <WatchFundDetail fund={detail} loading={loading} />
+      <p className="source-note">观察池不等于已持有；点击会刷新单只基金的公开数据，避免首页一次性堆满所有详情。</p>
+    </section>
+  );
+}
+
+function WatchFundDetail({ fund, loading }: { fund: FundRecord | null; loading: boolean }) {
+  if (!fund) {
+    return <div className="watch-detail muted-text">选择一只观察基金后显示详情。</div>;
+  }
+
+  const returnMetrics = [
+    ['近1月', fund.returns.oneMonth, fund.returnSource?.oneMonth],
+    ['近3月', fund.returns.threeMonths, fund.returnSource?.threeMonths],
+    ['近1年', fund.returns.oneYear, fund.returnSource?.oneYear],
+    ['近2年', fund.returns.twoYears, fund.returnSource?.twoYears],
+    ['可得区间', fund.returns.sinceAvailable, fund.returnSource?.sinceAvailable]
+  ] as const;
+
+  return (
+    <div className="watch-detail">
+      <div className="watch-detail-head">
+        <div>
+          <h3>{fund.code} · {fund.name}</h3>
+          <p>{fund.category}</p>
+        </div>
+        {loading && <span className="status-pill">刷新中</span>}
+      </div>
+      <div className="watch-return-grid">
+        {returnMetrics.map(([label, value, source]) => (
+          <div key={label}>
+            <span>{label}</span>
+            <b className={toneClass(value)}>{formatPercent(value)}</b>
+            <small>{source === 'netWorthTrend' ? '净值序列计算' : source === 'profile' ? '公开阶段涨幅' : '历史不足'}</small>
           </div>
         ))}
       </div>
-      <p className="source-note">观察池不等于已持有，也不构成主仓建议。</p>
-    </section>
+      <div className="detail-grid watch-basic-grid">
+        <span>最新净值</span>
+        <b>{formatNumber(fund.nav, 4)}</b>
+        <span>净值日期</span>
+        <b>{fund.navDate || '暂无'}</b>
+        <span>股票仓位</span>
+        <b>{formatPercent(fund.allocation.stock)}</b>
+        <span>基金经理</span>
+        <b>{fund.manager?.name || '暂无'}</b>
+      </div>
+      <h3>前十大持仓</h3>
+      <div className="holding-list compact">
+        {fund.topHoldings.length ? (
+          fund.topHoldings.slice(0, 10).map((holding) => (
+            <div key={`${fund.code}-watch-${holding.rank}-${holding.stockCode}`} className="holding-row">
+              <span>{holding.rank}. {holding.stockName}</span>
+              <b>{formatPercent(holding.weight)}</b>
+            </div>
+          ))
+        ) : (
+          <p className="muted-text">暂无持仓明细</p>
+        )}
+      </div>
+      <p className="source-note">
+        数据时间：{fund.source.refreshedAt || '暂无'}；持仓口径：{fund.source.holdingsAsOf || '基金季报'}。两年字段若显示暂无，通常是基金成立时间不足或公开接口未提供。
+      </p>
+    </div>
   );
 }
 

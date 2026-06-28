@@ -79,7 +79,21 @@ app.get(
 app.get(
   "/api/funds/:code",
   asyncHandler(async (req, res) => {
-    const result = await getFundByCode(req.params.code);
+    const result = await getFundByCode(req.params.code, { refresh: req.query.refresh === "1" });
+    const payload = result.data
+      ? {
+          fund: toClientFund(result.data),
+          meta: toClientMeta(result.meta, [])
+        }
+      : toClientPayload(result);
+    res.status(result.data ? 200 : 404).json(payload);
+  })
+);
+
+app.post(
+  "/api/funds/:code/refresh",
+  asyncHandler(async (req, res) => {
+    const result = await getFundByCode(req.params.code, { refresh: true });
     const payload = result.data
       ? {
           fund: toClientFund(result.data),
@@ -269,8 +283,11 @@ function toClientFund(fund) {
       oneMonth: fund.returns?.oneMonth ?? null,
       threeMonths: fund.returns?.threeMonths ?? null,
       sixMonths: fund.returns?.sixMonths ?? null,
-      oneYear: fund.returns?.oneYear ?? null
+      oneYear: fund.returns?.oneYear ?? null,
+      twoYears: fund.returns?.twoYears ?? null,
+      sinceAvailable: fund.returns?.sinceAvailable ?? null
     },
+    returnSource: fund.returnSource || {},
     allocation: {
       stock: fund.assetAllocation?.stock ?? null,
       cash: fund.assetAllocation?.cash ?? null,

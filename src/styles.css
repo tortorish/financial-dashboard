@@ -737,17 +737,32 @@ input {
 .watch-list {
   display: grid;
   gap: 8px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding-right: 2px;
 }
 
-.watch-list div {
+.watch-list button {
   align-items: center;
   background: #f8fafc;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
   display: grid;
   gap: 8px;
-  grid-template-columns: 70px 1fr;
+  grid-template-columns: 62px minmax(0, 1fr) minmax(72px, auto);
   padding: 8px;
+  text-align: left;
+}
+
+.watch-list button:hover,
+.watch-list button.selected {
+  border-color: #93c5fd;
+  box-shadow: inset 3px 0 0 var(--blue);
+}
+
+.watch-list button:disabled {
+  cursor: wait;
+  opacity: 0.8;
 }
 
 .watch-list span {
@@ -767,6 +782,85 @@ input {
   font-weight: 700;
   margin-right: 6px;
   padding: 2px 6px;
+}
+
+.watch-list small {
+  color: var(--muted);
+  font-size: 11px;
+  grid-column: 2 / 3;
+}
+
+.watch-list strong {
+  font-size: 13px;
+  grid-column: 3;
+  grid-row: 1 / 3;
+  justify-self: end;
+}
+
+.watch-detail {
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  margin-top: 12px;
+  padding: 12px;
+}
+
+.watch-detail-head {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.watch-detail-head h3 {
+  margin-bottom: 4px;
+}
+
+.watch-detail-head p {
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 0;
+}
+
+.watch-return-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(86px, 1fr));
+  margin-bottom: 12px;
+}
+
+.watch-return-grid div {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  min-height: 82px;
+  padding: 9px;
+}
+
+.watch-return-grid span,
+.watch-return-grid small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.watch-return-grid b {
+  font-size: 17px;
+  line-height: 1.15;
+}
+
+.watch-basic-grid {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.holding-list.compact {
+  max-height: 260px;
+  overflow-y: auto;
 }
 
 .quick-list {
@@ -1062,6 +1156,10 @@ input {
   .market-card-grid,
   .intraday-grid {
     grid-template-columns: 1fr;
+  }
+
+  .watch-return-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .fund-table {
