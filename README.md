@@ -1,167 +1,56 @@
-# 金融数据看板 (Financial Dashboard)
+# AI基金投资协作看板
 
-一个美观、实时的金融数据看板，追踪中美科技与半导体指数行情，支持 K 线图趋势分析。
+本地网页应用，用公开基金数据做每日查看、产业链分类、风险暴露和 AI 协作。V1 不连接同花顺账户，不读取真实持仓金额，不自动交易。
 
----
-
-## 功能特性
-
-- **实时行情追踪**：12 个核心指数，覆盖美股大盘、美股半导体、中国科技、中国芯片、港股科技五大板块
-- **一键刷新**：点击「刷新行情」按钮，实时从数据源获取最新报价
-- **K 线图趋势分析**：点击任意指数卡片，查看 3个月 / 6个月 / 1年 / 3年 K 线走势
-- **多数据源聚合**：
-  - **NeoData**（腾讯 FiT 代理 API）—— 实时行情
-  - **Yahoo Finance** —— 美股指数 K 线
-  - **腾讯自选股** —— 中国/港股指数 K 线
-- **数据真实性保障**：所有数据均来自真实 API 接口，无杜撰数据
-- **本地缓存**：K 线数据本地持久化缓存，秒开不重复请求
-- **Token 自动管理**：独立 token 文件，30 天有效期，无需每次获取
-- **代理自动清理**：启动时自动清除过期代理环境变量，避免请求失败
-
----
-
-## 覆盖指数
-
-| 分类 | 指数 | 代码 |
-|------|------|------|
-| **美股大盘** | 纳斯达克综合指数 | .IXIC.US |
-| | 标普 500 | .INX.US |
-| **美股半导体** | 费城半导体 ETF (SOXX) | SOXX.US |
-| | 半导体 ETF (SMH) | SMH.US |
-| **中国科技** | 科创 50 | 000688.SH |
-| | 创业板指 | 399006.SZ |
-| | 中国互联网 | H11136.CS |
-| | 中证科技 | 931186.CS |
-| **中国芯片** | 半导体（中证）| H30184.CS |
-| | 中华半导体芯片 | 990001.CS |
-| | 国证芯片 | 980017.SZ |
-| **港股科技** | 恒生科技指数 | HSTECH.HK |
-
----
-
-## 快速开始
-
-### 环境要求
-
-- Python 3.9+
-- macOS / Linux / Windows
-
-### 安装依赖
+## 运行
 
 ```bash
-pip install -r requirements.txt
+npm install
+cp .env.example .env
+npm run refresh
+npm run dev
 ```
 
-### 启动服务
+打开 Vite 输出的地址，默认是 `http://127.0.0.1:5173`。后端默认运行在 `http://127.0.0.1:8787`。
+
+AI 协作默认按 MiniMax OpenAI-compatible 接口配置：
 
 ```bash
-# 方式一：直接启动
-python3 app.py
-
-# 方式二：使用启动脚本
-./start.sh
+OPENAI_BASE_URL=https://api.minimaxi.com/v1
+OPENAI_MODEL=MiniMax-M3
 ```
 
-服务启动后，打开浏览器访问：**http://localhost:5050**
+Token Plan 的订阅 Key 与按量计费 API Key 是两套独立凭证。把 `.env` 里的 `OPENAI_API_KEY` 填好即可启用；没有 key 或 key 被平台拒绝时，聊天面板会提示配置/上游错误，不会导致页面崩溃。
 
----
+## 数据口径
 
-## API 文档
+- 基金基础信息、净值、阶段涨幅、资产配置、基金经理、前十大持仓来自东方财富/天天基金公开接口。
+- 交易日盘中波动使用天天基金 `fundgz.1234567.com.cn` 的净值估算；它不是最终日净值，也不是可直接成交的实时价格，最终以基金公司收盘后披露净值为准。
+- 重仓股涨跌使用基金已披露前十大持仓聚合股票池；A 股和港股日 K 线来自东方财富公开接口，美股来自 Yahoo Finance chart。字段包括 1日、1月、2月、3月、半年、1年，按最近可得交易日相对约 1/30/61/91/182/365 个自然日前交易日计算。
+- 净值和阶段涨幅相对较新；前十大持仓、股票仓位是基金定期披露口径，通常滞后于真实仓位。
+- 重仓股页面展示的是“已披露持仓股票的公开行情线索”，不是基金真实实时仓位，也不是你的真实持仓金额；股票涨跌不等于基金净值涨跌，不能用披露权重简单合成基金收益。
+- `data/cache/` 是本地缓存；接口失败时页面会显示缓存状态，不把缓存伪装成实时数据。
+- AI 协作面板会把 MiniMax 返回的 Markdown 渲染为标题、列表、代码块和链接；浏览器端不保存 API key。
 
-### 获取行情数据
+## API
 
-```
-GET /api/indices
-```
+- `GET /api/funds`：基金基础数据、阶段涨幅、分类和持仓。
+- `POST /api/refresh`：手动刷新基金基础数据。
+- `GET /api/funds/:code`：读取单只已配置基金详情。
+- `POST /api/funds/:code/refresh`：按需刷新单只基金详情，适合观察池点击查看，不必重刷全部基金。
+- `GET /api/funds/intraday`：读取基金盘中净值估算缓存。
+- `POST /api/funds/intraday/refresh`：刷新基金盘中净值估算。
+- `GET /api/holdings/performance`：读取已买基金重仓股涨跌、来源基金、合计披露权重和产业链分类。
+- `POST /api/holdings/performance/refresh`：刷新重仓股公开日 K 线并更新本地缓存。
+- `GET /api/markets/indices`：市场指数与行业代理指数。
+- `POST /api/chat`：把当前看板上下文传给本地后端，由 MiniMax 生成分析。
 
-返回所有指数的实时行情，60 秒内缓存。
+## 已买基金
 
-### 强制刷新行情
+`021511`、`018815`、`016237`、`020722`、`025209`、`016665`、`006503`、`005844`
 
-```
-POST /api/refresh
-```
+## 分类边界
 
-清除缓存，重新从数据源获取全部行情。
+已买基金和观察池分开展示。机器人、智能驾驶、世界模型相关基金仅作为未来观察池，不等于已持有，也不构成主仓建议。
 
-### 获取 K 线数据
-
-```
-GET /api/kline/<index_id>?period=<period>&refresh=<true|false>
-```
-
-**路径参数**：
-- `index_id`：指数 ID（如 `ixic`、`kc50`、`soxx` 等）
-
-**查询参数**：
-- `period`：周期，可选 `3m` / `6m` / `1y` / `3y`，默认 `1y`
-- `refresh`：是否强制刷新，默认 `false`
-
-**示例**：
-```bash
-curl "http://localhost:5050/api/kline/ixic?period=1y"
-```
-
-### 健康检查
-
-```
-GET /api/health
-```
-
-返回服务状态及 token 有效性。
-
----
-
-## 项目结构
-
-```
-financial-dashboard/
-├── app.py                  # Flask 后端服务主入口
-├── kline_fetcher.py        # K 线数据获取器（Yahoo / 腾讯 / NeoData）
-├── static/
-│   └── index.html          # 前端看板页面（ECharts K 线图）
-├── requirements.txt        # Python 依赖
-├── start.sh                # 一键启动脚本
-├── token.json              # NeoData 鉴权 token（自动管理）
-├── kline_cache.json        # K 线本地缓存（运行时生成）
-└── README.md               # 本文档
-```
-
----
-
-## 技术栈
-
-| 层级 | 技术 |
-|------|------|
-| 后端 | Python 3 + Flask + Flask-CORS |
-| 前端 | 纯 HTML/CSS/JS + ECharts 5 |
-| 数据源 | NeoData（腾讯 FiT）、Yahoo Finance、腾讯自选股 |
-| 数据格式 | JSON REST API |
-
----
-
-## 常见问题
-
-### Q: 重启电脑后需要做什么？
-
-只需要重新启动服务：
-```bash
-cd financial-dashboard
-python3 app.py
-```
-
-token 已持久化到 `token.json`，无需重复获取。
-
-### Q: 为什么有些指数 K 线数据点较少？
-
-部分中国指数（如国证芯片、中华半导体芯片）只能通过 NeoData 获取历史数据，其返回的是稀疏的月度/季度数据摘要。美股和科创50/创业板指/恒生科技通过 Yahoo Finance / 腾讯自选股 API 获取完整的日 K 线数据。
-
-### Q: 如何更新 token？
-
-token 有效期 30 天，过期后 `token.json` 会被自动判定为失效。此时需要重新通过 `connect_cloud_service` 工具获取新 token 并写入 `token.json`。
-
----
-
-## License
-
-MIT
+观察池采用“列表 + 按需详情”的模式：首页只展示每只观察基金的简要信号，点击后刷新并展开单只基金的 1月、3月、1年、2年、可得区间、前十大持仓和数据口径。若基金成立时间不足，两年或一年字段会显示暂无/历史不足。
