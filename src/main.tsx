@@ -172,9 +172,21 @@ type HoldingPerformanceResponse = {
     sourceLabel: string;
     caveat: string;
     coverage: { total: number; ok: number; missing: number };
+    sourceBreakdown?: Array<{ source: string; count: number }>;
     servedFromCache?: boolean;
     servedAt?: string | null;
   };
+};
+
+type PickerSegment = {
+  category: string;
+  stage: '上游' | '中游' | '下游' | '应用/平台' | '交叉/待分类';
+  description: string;
+  stocks: HoldingPerformanceStock[];
+  totalWeight: number | null;
+  avg: Record<'oneMonth' | 'threeMonths' | 'oneYear', number | null>;
+  coverage: { total: number; ok: number };
+  funds: Array<{ code: string; weight: number | null }>;
 };
 
 type KlineRecord = {
@@ -391,7 +403,7 @@ function App() {
   const [holdingData, setHoldingData] = React.useState<HoldingPerformanceResponse | null>(null);
   const [holdingLoading, setHoldingLoading] = React.useState(false);
   const [holdingError, setHoldingError] = React.useState<string | null>(null);
-  const [activeView, setActiveView] = React.useState<'dashboard' | 'holdings'>('dashboard');
+  const [activeView, setActiveView] = React.useState<'dashboard' | 'holdings' | 'picker'>('dashboard');
   const [loading, setLoading] = React.useState(true);
   const [refreshing, setRefreshing] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -418,7 +430,7 @@ function App() {
   }, []);
 
   React.useEffect(() => {
-    if (activeView === 'holdings' && !holdingData && !holdingLoading) {
+    if ((activeView === 'holdings' || activeView === 'picker') && !holdingData && !holdingLoading) {
       loadHoldingsPerformance(false);
     }
   }, [activeView, holdingData, holdingLoading]);
@@ -559,7 +571,13 @@ function App() {
       <section className="topbar">
         <div>
           <p className="eyebrow">AI金融协作看板 V2</p>
-          <h1>{activeView === 'dashboard' ? '市场温度、基金持仓和 AI 归因在同一屏' : '基金重仓股涨跌与半导体产业链'}</h1>
+          <h1>
+            {activeView === 'dashboard'
+              ? '市场温度、基金持仓和 AI 归因在同一屏'
+              : activeView === 'holdings'
+                ? '基金重仓股涨跌与半导体产业链'
+                : '选基板块：半导体上中下游观察'}
+          </h1>
         </div>
         <div className="top-actions">
           <div className="view-tabs" aria-label="切换看板视图">
@@ -568,6 +586,9 @@ function App() {
             </button>
             <button className={activeView === 'holdings' ? 'active' : ''} onClick={() => setActiveView('holdings')}>
               重仓股涨跌
+            </button>
+            <button className={activeView === 'picker' ? 'active' : ''} onClick={() => setActiveView('picker')}>
+              选基板块
             </button>
           </div>
           {activeView === 'dashboard' ? (
@@ -578,7 +599,7 @@ function App() {
           ) : (
             <button className="primary-button" onClick={() => loadHoldingsPerformance(true)} disabled={holdingLoading}>
               <RefreshCw size={18} className={holdingLoading ? 'spin' : ''} />
-              {holdingLoading ? '刷新中' : '刷新重仓股'}
+              {holdingLoading ? '刷新中' : activeView === 'picker' ? '刷新选基样本' : '刷新重仓股'}
             </button>
           )}
         </div>
@@ -589,6 +610,8 @@ function App() {
 
       {activeView === 'holdings' ? (
         <HoldingsPerformancePage data={holdingData} loading={holdingLoading} error={holdingError} />
+      ) : activeView === 'picker' ? (
+        <FundPickerPage data={holdingData} loading={holdingLoading} error={holdingError} />
       ) : (
         <>
 
@@ -798,6 +821,178 @@ function HoldingsPerformancePage({
   );
 }
 
+function FundPickerPage({
+  data,
+  loading,
+  error
+}: {
+  data: HoldingPerformanceResponse | null;
+  loading: boolean;
+  error: string | null;
+}) {
+  const stocks = data?.stocks ?? [];
+  const segments = buildPickerSegments(stocks);
+  const segmentMedianOneMonth = median(segments.map((item) => item.avg.oneMonth).filter(isNumber));
+  const laggards = segments.filter((item) => isRelativeLaggard(item, segmentMedianOneMonth));
+  const overheated = segments.filter((item) => (item.avg.oneMonth ?? 0) >= 30 || (item.avg.threeMonths ?? 0) >= 80);
+  const stages = ['上游', '中游', '下游', '应用/平台', '交叉/待分类'] as const;
+
+  return (
+    <section className="picker-page">
+      <div className="holding-source-alert">
+        <Database size={16} />
+        <span>
+          {data
+            ? `选基样本来自你已买基金披露的前十大持仓，股票行情源：${formatSourceBreakdown(data)}；缓存时间 ${data.meta.refreshedAt || '暂无'}。这不是全市场半导体股票池，也不是买卖指令。`
+            : '等待读取重仓股样本，用来拆解半导体上游、中游、下游板块。'}
+        </span>
+      </div>
+      {error && <div className="alert error">选基样本加载失败：{error}</div>}
+      {loading && <div className="chart-placeholder">正在读取半导体产业链样本...</div>}
+      {!loading && data && (
+        <>
+          <section className="kpi-grid holding-kpis">
+            <MetricCard icon={<BrainCircuit />} label="产业链板块" value={`${segments.length} 个`} note="按上游/中游/下游重新组织" />
+            <MetricCard
+              icon={<Activity />}
+              label="低热度待复核线索"
+              value={`${laggards.length} 个`}
+              note="近1月低于样本中位数，需继续复核"
+            />
+            <MetricCard icon={<ShieldAlert />} label="偏热观察" value={`${overheated.length} 个`} note="短期涨幅高，适合看回撤和分批纪律" />
+            <MetricCard
+              icon={<Database />}
+              label="样本覆盖"
+              value={`${data.meta.coverage.ok}/${data.meta.coverage.total}`}
+              note="只覆盖公开接口可映射股票"
+            />
+          </section>
+
+          <section className="picker-method">
+            <div>
+              <h2>一个更稳的“低热度”选基框架</h2>
+              <p>
+                低涨幅不是自动便宜。这里先用公开股票样本做板块温度计，再结合趋势确认、基金规模、费率、基金经理、最大回撤、估值和个人仓位预算，帮助你决定哪些主题值得进一步研究。
+              </p>
+            </div>
+            <div className="strategy-grid">
+              <StrategyCard title="低热度线索" value="1月低于中位数" text="只进入待复核清单，不代表低估；再看3月趋势、估值和基金质量。" />
+              <StrategyCard title="趋势确认" value="3月不塌" text="1月没涨、3月也持续走弱，往往不是低估，而可能是景气度或资金偏好转弱。" />
+              <StrategyCard title="防追涨" value="1月>30%警惕" text="短期涨幅过高时，不用急着追；优先等回撤、看仓位上限和风险预算。" />
+              <StrategyCard title="数据纪律" value="看披露日期" text="基金前十大持仓是季报口径，不能当成实时仓位，也不能合成基金收益。" />
+            </div>
+          </section>
+
+          <div className="stage-stack">
+            {stages.map((stage) => {
+              const items = segments.filter((item) => item.stage === stage);
+              if (!items.length) return null;
+              return (
+                <section className="stage-section" key={stage}>
+                  <div className="stage-heading">
+                    <div>
+                      <h2>{stage}</h2>
+                      <p>{stageDescription(stage)}</p>
+                    </div>
+                    <span>{items.length} 个板块</span>
+                  </div>
+                  <div className="segment-grid">
+                    {items.map((segment) => (
+                      <SegmentCard key={segment.category} segment={segment} segmentMedianOneMonth={segmentMedianOneMonth} />
+                    ))}
+                  </div>
+                </section>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+function StrategyCard({ title, value, text }: { title: string; value: string; text: string }) {
+  return (
+    <article className="strategy-card">
+      <b>{title}</b>
+      <strong>{value}</strong>
+      <p>{text}</p>
+    </article>
+  );
+}
+
+function SegmentCard({ segment, segmentMedianOneMonth }: { segment: PickerSegment; segmentMedianOneMonth: number | null }) {
+  const status = segmentStatus(segment, segmentMedianOneMonth);
+  const fundText = segment.funds.slice(0, 4).map((item) => `${item.code} ${formatPercent(item.weight)}`).join(' / ') || '暂无基金映射';
+
+  return (
+    <article className={`segment-card ${status.tone}`}>
+      <header>
+        <div>
+          <h3>{segment.category}</h3>
+          <p>{segment.description}</p>
+        </div>
+        <span>{status.label}</span>
+      </header>
+      <div className="segment-metrics">
+        <div>
+          <span>股票1月均值</span>
+          <b className={toneClass(segment.avg.oneMonth)}>{formatPercent(segment.avg.oneMonth)}</b>
+        </div>
+        <div>
+          <span>股票3月均值</span>
+          <b className={toneClass(segment.avg.threeMonths)}>{formatPercent(segment.avg.threeMonths)}</b>
+        </div>
+        <div>
+          <span>股票1年均值</span>
+          <b className={toneClass(segment.avg.oneYear)}>{formatPercent(segment.avg.oneYear)}</b>
+        </div>
+        <div>
+          <span>样本披露权重合计</span>
+          <b>{formatPercent(segment.totalWeight)}</b>
+        </div>
+      </div>
+      <div className="segment-note">{status.text}</div>
+      <div className="segment-funds">
+        <b>关联基金样本</b>
+        <span>{fundText}</span>
+      </div>
+      <div className="segment-stock-list">
+        {segment.stocks.slice(0, 5).map((stock) => (
+          <div key={`${segment.category}-${stock.stockCode}`}>
+            <span>
+              <b>{stock.stockName}</b>
+              <small>{stock.stockCode} · {stock.market}</small>
+            </span>
+            <em className={toneClass(stock.returns.oneMonth)}>{formatPercent(stock.returns.oneMonth)}</em>
+            <em className={toneClass(stock.returns.threeMonths)}>{formatPercent(stock.returns.threeMonths)}</em>
+          </div>
+        ))}
+      </div>
+      <p className="source-note">
+        样本 {segment.stocks.length} 只，行情覆盖 {segment.coverage.ok}/{segment.coverage.total}；权重是跨基金前十大披露权重相加，不代表你的组合仓位；均值为可得股票简单平均，不代表基金收益。
+      </p>
+    </article>
+  );
+}
+
+function formatSourceBreakdown(data: HoldingPerformanceResponse) {
+  const items = data.meta.sourceBreakdown || [];
+  if (!items.length) return data.meta.sourceLabel;
+  return items.map((item) => `${sourceDisplayName(item.source)} ${item.count}只`).join(' / ');
+}
+
+function sourceDisplayName(source: string) {
+  if (source.includes('Tencent A-share')) return '腾讯A股前复权K线';
+  if (source.includes('Tencent HK')) return '腾讯港股前复权K线';
+  if (source.includes('Eastmoney A-share')) return '东方财富A股前复权K线';
+  if (source.includes('Eastmoney HK')) return '东方财富港股前复权K线';
+  if (source.includes('Yahoo')) return 'Yahoo美股日线';
+  if (source === 'unsupported_code') return '暂不支持代码';
+  if (source === 'fetch_failed') return '本次抓取失败';
+  return source;
+}
+
 function groupHoldingStocks(stocks: HoldingPerformanceStock[], sortKey: HoldingReturnKey | 'totalWeight') {
   return stocks.reduce<Record<string, HoldingPerformanceStock[]>>((acc, stock) => {
     const key = stock.chainCategory || '其它/待分类';
@@ -816,16 +1011,126 @@ function groupWeight(stocks: HoldingPerformanceStock[]) {
 }
 
 function categoryDescription(category: string) {
+  if (category.includes('其它') || category.includes('待分类')) return '暂未归入明确产业链位置，不用于直接选基判断';
+  if (category.includes('电力设备') || category.includes('高端制造')) return '横跨制造、能源和AI硬件配套，暂作为交叉观察项';
+  if (category.includes('CPO') || category.includes('光通信')) return 'AI数据中心内部高速传输所需的光模块、激光器和通信设备';
+  if (category.includes('PCB')) return 'AI服务器里的高速电路板和配套硬件';
   if (category.includes('存储')) return '保存AI数据和模型中间结果的芯片，价格周期性强';
   if (category.includes('设备')) return '卖给晶圆厂的制造、清洗、检测等机器和零部件';
   if (category.includes('材料')) return '晶圆制造和封装测试会消耗的关键材料';
   if (category.includes('晶圆制造')) return '把芯片设计图变成真实硅片的代工制造环节';
   if (category.includes('AI芯片') || category.includes('算力')) return '训练和推理模型需要的GPU、ASIC或配套芯片';
-  if (category.includes('CPO') || category.includes('光通信')) return 'AI数据中心内部高速传输所需的光模块、激光器和通信设备';
-  if (category.includes('PCB')) return 'AI服务器里的高速电路板和配套硬件';
   if (category.includes('终端') || category.includes('电子制造')) return 'AI手机、电脑、服务器等终端制造链';
   if (category.includes('平台')) return '互联网平台或云生态公司，不是纯半导体制造';
   return '暂按持仓名称和代码映射，后续可细分到上游/中游/下游';
+}
+
+function buildPickerSegments(stocks: HoldingPerformanceStock[]): PickerSegment[] {
+  const grouped = stocks.reduce<Record<string, HoldingPerformanceStock[]>>((acc, stock) => {
+    const key = stock.chainCategory || '其它/待分类';
+    acc[key] = [...(acc[key] ?? []), stock];
+    return acc;
+  }, {});
+
+  return Object.entries(grouped)
+    .map(([category, items]) => {
+      const funds = aggregateSegmentFunds(items);
+      return {
+        category,
+        stage: stageForCategory(category),
+        description: categoryDescription(category),
+        stocks: [...items].sort((left, right) => (right.totalWeight ?? 0) - (left.totalWeight ?? 0)),
+        totalWeight: groupWeight(items),
+        avg: {
+          oneMonth: averageReturn(items, 'oneMonth'),
+          threeMonths: averageReturn(items, 'threeMonths'),
+          oneYear: averageReturn(items, 'oneYear')
+        },
+        coverage: {
+          total: items.length,
+          ok: items.filter((item) => item.dataStatus === 'ok').length
+        },
+        funds
+      };
+    })
+    .sort((left, right) => stageRank(left.stage) - stageRank(right.stage) || (right.totalWeight ?? 0) - (left.totalWeight ?? 0));
+}
+
+function stageForCategory(category: string): PickerSegment['stage'] {
+  if (/其它|待分类|电力设备|高端制造/.test(category)) return '交叉/待分类';
+  if (/CPO|光通信|PCB|终端|服务器链|电子制造|光学/.test(category)) return '下游';
+  if (/存储|AI芯片|芯片设计|晶圆制造|算力芯片|存储接口|SoC|IP/.test(category)) return '中游';
+  if (/设备|材料|玻纤/.test(category)) return '上游';
+  if (/平台|互联网|广告/.test(category)) return '应用/平台';
+  return '交叉/待分类';
+}
+
+function stageDescription(stage: PickerSegment['stage']) {
+  if (stage === '上游') return '更偏“卖铲子”：设备、材料、零部件，受扩产周期和国产替代影响。';
+  if (stage === '中游') return '更偏芯片本体：设计、制造、存储、AI算力芯片，弹性大但波动也大。';
+  if (stage === '下游') return '更贴近AI服务器和终端应用：光通信、PCB、电子制造，常跟算力建设节奏同步。';
+  if (stage === '应用/平台') return '更偏互联网、云和平台生态，不是纯半导体，但会受AI应用景气影响。';
+  return '横跨多个产业或暂未分类，不作为直接选基判断，只做线索保存。';
+}
+
+function stageRank(stage: PickerSegment['stage']) {
+  return ['上游', '中游', '下游', '应用/平台', '交叉/待分类'].indexOf(stage);
+}
+
+function averageReturn(stocks: HoldingPerformanceStock[], key: 'oneMonth' | 'threeMonths' | 'oneYear') {
+  const values = stocks.map((stock) => stock.returns[key]).filter(isNumber);
+  if (!values.length) return null;
+  return Number((values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(2));
+}
+
+function aggregateSegmentFunds(stocks: HoldingPerformanceStock[]) {
+  const byFund = new Map<string, number>();
+  for (const stock of stocks) {
+    for (const fund of stock.funds) {
+      byFund.set(fund.code, Number(((byFund.get(fund.code) ?? 0) + (fund.weight ?? 0)).toFixed(2)));
+    }
+  }
+  return [...byFund.entries()]
+    .map(([code, weight]) => ({ code, weight }))
+    .sort((left, right) => (right.weight ?? 0) - (left.weight ?? 0));
+}
+
+function segmentStatus(segment: PickerSegment, medianOneMonth: number | null) {
+  if (segment.stage === '交叉/待分类') {
+    return { label: '待分类', tone: 'neutral', text: '这个板块横跨多个产业或分类不明，只保存为观察线索，不进入选基状态判断。' };
+  }
+  if (segment.coverage.ok < Math.ceil(segment.coverage.total * 0.5)) {
+    return { label: '数据不足', tone: 'neutral', text: '公开行情覆盖不足，先不要用这个板块做选基判断。' };
+  }
+  if (segment.coverage.total === 1) {
+    return { label: '小样本', tone: 'neutral', text: '这个板块只有1只样本股，适合做线索，不适合单独代表整个产业环节。' };
+  }
+  if ((segment.avg.oneMonth ?? 0) >= 30 || (segment.avg.threeMonths ?? 0) >= 80) {
+    return { label: '偏热观察', tone: 'warm', text: '短期涨幅较高，更适合观察回撤、估值消化和仓位上限，不适合机械追涨。' };
+  }
+  if (isRelativeLaggard(segment, medianOneMonth)) {
+    return { label: '待复核线索', tone: 'cool', text: '近1月相对没那么热，且3月趋势没有明显走坏；这不是低估判断，需再看基金规模、费率、经理、回撤、估值和个人仓位。' };
+  }
+  if ((segment.avg.oneMonth ?? 0) < 0 && (segment.avg.threeMonths ?? 0) < 0) {
+    return { label: '趋势待确认', tone: 'neutral', text: '短中期同时偏弱，可能不是便宜，而是景气或资金偏好变弱。' };
+  }
+  return { label: '正常观察', tone: 'neutral', text: '涨跌处在样本中间区域，适合作为组合暴露对照，不急于下判断。' };
+}
+
+function isRelativeLaggard(segment: PickerSegment, medianOneMonth: number | null) {
+  if (medianOneMonth === null || segment.avg.oneMonth === null) return false;
+  return segment.avg.oneMonth < medianOneMonth && (segment.avg.threeMonths ?? -999) >= 0;
+}
+
+function median(values: number[]) {
+  if (!values.length) return null;
+  const sorted = [...values].sort((left, right) => left - right);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] : Number(((sorted[mid - 1] + sorted[mid]) / 2).toFixed(2));
+}
+
+function isNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
 }
 
 function isPriorityHoldingReturn(key: HoldingReturnKey) {

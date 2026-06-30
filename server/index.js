@@ -279,6 +279,7 @@ function toClientHoldingPerformance(result) {
         result.meta?.caveat ||
         "股票涨跌幅基于公开日K线复权收盘价计算；基金持仓来自定期披露，通常滞后于真实仓位。",
       coverage: result.meta?.coverage || { total: 0, ok: 0, missing: 0 },
+      sourceBreakdown: result.meta?.sourceBreakdown || [],
       servedFromCache: Boolean(result.servedFromCache),
       servedAt: result.servedAt || null
     }

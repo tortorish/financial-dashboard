@@ -386,6 +386,11 @@ input {
   gap: 16px;
 }
 
+.picker-page {
+  display: grid;
+  gap: 16px;
+}
+
 .holding-source-alert {
   align-items: flex-start;
   background: #eef6ff;
@@ -531,6 +536,235 @@ input {
 .holding-fund-list b {
   color: var(--ink);
   font-size: 13px;
+}
+
+.picker-method,
+.stage-section {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  padding: 16px;
+}
+
+.picker-method {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(260px, 0.85fr) minmax(520px, 1.4fr);
+}
+
+.picker-method p,
+.strategy-card p,
+.stage-heading p,
+.segment-card p,
+.segment-note,
+.segment-funds span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.strategy-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.strategy-card {
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  display: grid;
+  gap: 6px;
+  min-height: 132px;
+  padding: 12px;
+}
+
+.strategy-card b {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.strategy-card strong {
+  color: var(--blue);
+  font-size: 18px;
+  line-height: 1.15;
+}
+
+.strategy-card p {
+  margin-bottom: 0;
+}
+
+.stage-stack {
+  display: grid;
+  gap: 16px;
+}
+
+.stage-heading {
+  align-items: flex-start;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  margin: -2px 0 14px;
+  padding-bottom: 12px;
+}
+
+.stage-heading h2 {
+  font-size: 20px;
+}
+
+.stage-heading p {
+  margin-bottom: 0;
+}
+
+.stage-heading span {
+  background: #eef6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  color: #1d4ed8;
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 5px 9px;
+}
+
+.segment-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.segment-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  min-height: 360px;
+  padding: 14px;
+}
+
+.segment-card.cool {
+  background: #f0fdfa;
+  border-color: #99f6e4;
+}
+
+.segment-card.warm {
+  background: #fff7ed;
+  border-color: #fed7aa;
+}
+
+.segment-card.neutral {
+  background: #f8fafc;
+}
+
+.segment-card header {
+  align-items: flex-start;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.segment-card header h3 {
+  font-size: 16px;
+  margin-bottom: 5px;
+}
+
+.segment-card header p {
+  margin-bottom: 0;
+}
+
+.segment-card header span {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--ink);
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 5px 9px;
+}
+
+.segment-metrics {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.segment-metrics div {
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(216, 224, 234, 0.9);
+  border-radius: 8px;
+  display: grid;
+  gap: 5px;
+  min-height: 76px;
+  padding: 9px;
+}
+
+.segment-metrics span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.segment-metrics b {
+  font-size: 16px;
+  line-height: 1.15;
+}
+
+.segment-note,
+.segment-funds {
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(216, 224, 234, 0.85);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.segment-funds {
+  display: grid;
+  gap: 4px;
+}
+
+.segment-funds b {
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.segment-stock-list {
+  display: grid;
+  gap: 7px;
+}
+
+.segment-stock-list div {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(216, 224, 234, 0.85);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) 72px 72px;
+  min-height: 50px;
+  padding: 8px 9px;
+}
+
+.segment-stock-list span {
+  display: grid;
+  gap: 3px;
+}
+
+.segment-stock-list b {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.segment-stock-list small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.segment-stock-list em {
+  font-size: 12px;
+  font-style: normal;
+  justify-self: end;
 }
 
 .intraday-summary {
@@ -1311,6 +1545,15 @@ input {
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   }
 
+  .picker-method,
+  .segment-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .strategy-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .intraday-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1339,7 +1582,7 @@ input {
 
   .view-tabs {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr;
   }
 
   h1 {
@@ -1349,8 +1592,29 @@ input {
   .kpi-grid,
   .market-card-grid,
   .intraday-grid,
-  .holding-kpis {
+  .holding-kpis,
+  .strategy-grid,
+  .segment-metrics {
     grid-template-columns: 1fr;
+  }
+
+  .stage-heading,
+  .segment-card header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .stage-heading span,
+  .segment-card header span {
+    width: fit-content;
+  }
+
+  .segment-stock-list div {
+    grid-template-columns: 1fr 72px;
+  }
+
+  .segment-stock-list em:last-child {
+    display: none;
   }
 
   .watch-return-grid {

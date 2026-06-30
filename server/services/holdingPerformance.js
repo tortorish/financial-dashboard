@@ -49,22 +49,22 @@ export async function refreshHoldingPerformance() {
       if (!source) {
         return unavailableStock(stock, fetchedAt, "unsupported_code");
       }
-      const records = await fetchDailyRecords(source);
-      const returns = calculateReturns(records);
-      const latest = records[records.length - 1];
-      return {
-        ...stock,
-        market: source.market,
-        quoteSymbol: source.symbol,
-        chainCategory: classifyHolding(stock),
-        latestPrice: latest?.close ?? null,
-        latestDate: latest?.date ?? null,
-        returns,
-        dataStatus: records.length ? "ok" : "no_data",
-        source: source.source,
-        error: null,
-        fetchedAt
-      };
+        const records = await fetchDailyRecords(source);
+        const returns = calculateReturns(records);
+        const latest = records[records.length - 1];
+        return {
+          ...stock,
+          market: source.market,
+          quoteSymbol: source.symbol,
+          chainCategory: classifyHolding(stock),
+          latestPrice: latest?.close ?? null,
+          latestDate: latest?.date ?? null,
+          returns,
+          dataStatus: records.length ? "ok" : "no_data",
+          source: records.source || source.source,
+          error: null,
+          fetchedAt
+        };
     } catch (error) {
       return {
         ...unavailableStock(stock, fetchedAt, "fetch_failed"),
@@ -73,15 +73,17 @@ export async function refreshHoldingPerformance() {
     }
   });
 
+  const sourceBreakdown = summarizeSources(stockRows);
   const payload = {
     stocks: stockRows.sort((left, right) => (right.totalWeight ?? 0) - (left.totalWeight ?? 0)),
     groups: summarizeGroups(stockRows),
     meta: {
       fetchedAt,
       cacheUpdatedAt: new Date().toISOString(),
-      sourceLabel: "Eastmoney public K-line / Yahoo Finance chart",
+      sourceLabel: buildSourceLabel(sourceBreakdown),
       caveat:
-        "股票涨跌幅基于公开日K线计算；A股/港股采用东方财富前复权日K线，美股采用Yahoo Finance调整收盘价可用值。基金持仓来自定期披露，通常滞后于真实仓位。",
+        "股票涨跌幅基于公开日K线计算；A股/港股优先使用东方财富前复权日K线，失败时降级到腾讯前复权日K线，美股优先使用Yahoo Finance调整收盘价。基金持仓来自定期披露，通常滞后于真实仓位。",
+      sourceBreakdown,
       coverage: {
         total: stockRows.length,
         ok: stockRows.filter((item) => item.dataStatus === "ok").length,
@@ -150,7 +152,13 @@ function resolveQuoteSource(code) {
       source: "Eastmoney A-share daily K-line",
       market: market === 1 ? "A股-上海" : "A股-深圳",
       symbol: `${market}.${code}`,
-      url: eastmoneyKlineUrl(`${market}.${code}`)
+      url: eastmoneyKlineUrl(`${market}.${code}`),
+      fallbacks: [
+        {
+          source: "Tencent A-share qfq daily K-line",
+          url: tencentKlineUrl(`${market === 1 ? "sh" : "sz"}${code}`, "cn")
+        }
+      ]
     };
   }
 
@@ -159,7 +167,13 @@ function resolveQuoteSource(code) {
       source: "Eastmoney HK daily K-line",
       market: "港股",
       symbol: `116.${code}`,
-      url: eastmoneyKlineUrl(`116.${code}`)
+      url: eastmoneyKlineUrl(`116.${code}`),
+      fallbacks: [
+        {
+          source: "Tencent HK qfq daily K-line",
+          url: tencentKlineUrl(`hk${code}`, "hk")
+        }
+      ]
     };
   }
 
@@ -176,10 +190,22 @@ function resolveQuoteSource(code) {
 }
 
 async function fetchDailyRecords(source) {
-  if (source.source.startsWith("Eastmoney")) {
-    return fetchEastmoneyRecords(source.url);
+  const candidates = [{ source: source.source, url: source.url }, ...(source.fallbacks || [])];
+  const errors = [];
+  for (const candidate of candidates) {
+    try {
+      const records = candidate.source.startsWith("Eastmoney")
+        ? await fetchEastmoneyRecords(candidate.url)
+        : candidate.source.startsWith("Tencent")
+          ? await fetchTencentRecords(candidate.url)
+          : await fetchYahooRecords(candidate.url);
+      records.source = candidate.source;
+      return records;
+    } catch (error) {
+      errors.push(`${candidate.source}: ${error.message}`);
+    }
   }
-  return fetchYahooRecords(source.url);
+  throw new Error(errors.join("；"));
 }
 
 async function fetchEastmoneyRecords(url) {
@@ -241,6 +267,36 @@ async function fetchYahooRecords(url) {
     .filter((item) => item.close !== null);
   if (!records.length) {
     throw new Error("Yahoo Finance returned no daily records");
+  }
+  return records;
+}
+
+async function fetchTencentRecords(url) {
+  const response = await fetch(url, {
+    headers: {
+      "user-agent":
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X) AppleWebKit/537.36 FundDashboard/0.1",
+      referer: "https://gu.qq.com/"
+    }
+  });
+  if (!response.ok) {
+    throw new Error(`Tencent K-line HTTP ${response.status}`);
+  }
+  const payload = await response.json();
+  const first = Object.values(payload.data || {})[0];
+  const rows = first?.qfqday || first?.day || [];
+  const records = rows
+    .map((row) => ({
+      date: row[0],
+      open: toNumber(row[1]),
+      close: toNumber(row[2]),
+      high: toNumber(row[3]),
+      low: toNumber(row[4]),
+      volume: toNumber(row[5])
+    }))
+    .filter((item) => item.close !== null);
+  if (!records.length) {
+    throw new Error("Tencent returned no daily records");
   }
   return records;
 }
@@ -342,6 +398,24 @@ function summarizeGroups(stocks) {
   }, {});
 }
 
+function summarizeSources(stocks) {
+  const bySource = {};
+  for (const stock of stocks) {
+    const key = stock.dataStatus === "ok" ? stock.source || "unknown" : stock.dataStatus;
+    bySource[key] = (bySource[key] || 0) + 1;
+  }
+  return Object.entries(bySource)
+    .map(([source, count]) => ({ source, count }))
+    .sort((left, right) => right.count - left.count || left.source.localeCompare(right.source));
+}
+
+function buildSourceLabel(sourceBreakdown) {
+  const sourceText = sourceBreakdown
+    .map((item) => `${item.source} ${item.count}只`)
+    .join(" / ");
+  return `${sourceText}; Eastmoney is primary for A/H, Tencent is fallback, Yahoo is used for US`;
+}
+
 function unavailableStock(stock, fetchedAt, status) {
   return {
     ...stock,
@@ -369,6 +443,13 @@ function eastmoneyKlineUrl(secid) {
   return `https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=${encodeURIComponent(
     secid
   )}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61&klt=101&fqt=1&beg=20250101&end=20500101`;
+}
+
+function tencentKlineUrl(symbol, market) {
+  const endpoint = market === "hk" ? "hkfqkline" : "fqkline";
+  return `https://web.ifzq.gtimg.cn/appstock/app/${endpoint}/get?param=${encodeURIComponent(
+    `${symbol},day,,,520,qfq`
+  )}`;
 }
 
 async function readCache() {
