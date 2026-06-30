@@ -12,6 +12,7 @@ import {
 } from "./services/fundData.js";
 import { getMarketIndices, getMarketKline, refreshMarketIndices } from "./services/marketData.js";
 import { getHoldingPerformance, refreshHoldingPerformance } from "./services/holdingPerformance.js";
+import { getFundPickerBrief } from "./services/fundPickerBrief.js";
 import { runChat } from "./services/chat.js";
 import { buildMeta } from "./services/metadata.js";
 
@@ -80,6 +81,20 @@ app.post(
   "/api/holdings/performance/refresh",
   asyncHandler(async (_req, res) => {
     res.json(toClientHoldingPerformance(await refreshHoldingPerformance()));
+  })
+);
+
+app.get(
+  "/api/fund-picker/brief",
+  asyncHandler(async (_req, res) => {
+    res.json(await getFundPickerBrief());
+  })
+);
+
+app.post(
+  "/api/fund-picker/brief/refresh",
+  asyncHandler(async (_req, res) => {
+    res.json(await getFundPickerBrief({ refresh: true }));
   })
 );
 

@@ -178,16 +178,71 @@ type HoldingPerformanceResponse = {
   };
 };
 
-type PickerSegment = {
-  category: string;
-  stage: '上游' | '中游' | '下游' | '应用/平台' | '交叉/待分类';
-  description: string;
-  stocks: HoldingPerformanceStock[];
-  totalWeight: number | null;
-  avg: Record<'oneMonth' | 'threeMonths' | 'oneYear', number | null>;
-  coverage: { total: number; ok: number };
-  funds: Array<{ code: string; weight: number | null }>;
+type FundPickerStage = '上游' | '中游' | '下游' | '应用/平台' | '交叉/待分类';
+
+type FundPickerBriefResponse = {
+  dataCheck: {
+    status: 'usable' | 'degraded' | 'blocked';
+    statusLabel: string;
+    allowDecision: boolean;
+    coverage: { total: number; ok: number; missing: number };
+    coverageRatio: number | null;
+    sourceBreakdown?: Array<{ source: string; count: number }>;
+    fallbackCount: number;
+    cacheTime?: string | null;
+    blockedSegments: number;
+    message: string;
+  };
+  summary: string;
+  decisionCards: Array<{
+    type: 'hold' | 'review' | 'watch';
+    title: string;
+    conclusion: string;
+    reason: string;
+    sectors: Array<{
+      category: string;
+      stage: FundPickerStage;
+      oneMonth: number | null;
+      threeMonths: number | null;
+      sampleCount: number;
+      coverageOk: number;
+    }>;
+    relatedFunds: Array<{ code: string; name?: string; weight: number | null }>;
+    nextQuestion: string;
+    guardrail: string;
+  }>;
+  sectorFindings: Array<{
+    category: string;
+    stage: FundPickerStage;
+    description: string;
+    avg: { oneMonth: number | null; threeMonths: number | null; oneYear: number | null };
+    coverage: { total: number; ok: number };
+    sampleWeightTotal: number | null;
+    relatedFunds: Array<{ code: string; name?: string; weight: number | null }>;
+    sampleStocks: Array<{
+      code: string;
+      name: string;
+      market: string;
+      source: string;
+      oneMonth: number | null;
+      threeMonths: number | null;
+      totalWeight: number | null;
+    }>;
+    status: 'blocked' | 'excluded' | 'small_sample' | 'data_insufficient' | 'hot' | 'review' | 'weak_trend' | 'watch';
+  }>;
+  fundMatches: Array<{ code: string; name?: string; weight: number | null; cards: string[] }>;
+  riskFlags: Array<{ level: 'low' | 'medium' | 'high'; title: string; text: string }>;
+  auditTrail: string[];
+  meta: {
+    refreshedAt?: string | null;
+    sourceLabel: string;
+    sourceBreakdown?: Array<{ source: string; count: number }>;
+    caveat: string;
+  };
 };
+
+type PickerSectorFinding = FundPickerBriefResponse['sectorFindings'][number];
+type PickerDecisionCard = FundPickerBriefResponse['decisionCards'][number];
 
 type KlineRecord = {
   date: string;
@@ -403,6 +458,9 @@ function App() {
   const [holdingData, setHoldingData] = React.useState<HoldingPerformanceResponse | null>(null);
   const [holdingLoading, setHoldingLoading] = React.useState(false);
   const [holdingError, setHoldingError] = React.useState<string | null>(null);
+  const [pickerBrief, setPickerBrief] = React.useState<FundPickerBriefResponse | null>(null);
+  const [pickerLoading, setPickerLoading] = React.useState(false);
+  const [pickerError, setPickerError] = React.useState<string | null>(null);
   const [activeView, setActiveView] = React.useState<'dashboard' | 'holdings' | 'picker'>('dashboard');
   const [loading, setLoading] = React.useState(true);
   const [refreshing, setRefreshing] = React.useState(false);
@@ -430,10 +488,16 @@ function App() {
   }, []);
 
   React.useEffect(() => {
-    if ((activeView === 'holdings' || activeView === 'picker') && !holdingData && !holdingLoading) {
+    if (activeView === 'holdings' && !holdingData && !holdingLoading) {
       loadHoldingsPerformance(false);
     }
   }, [activeView, holdingData, holdingLoading]);
+
+  React.useEffect(() => {
+    if (activeView === 'picker' && !pickerBrief && !pickerLoading) {
+      loadFundPickerBrief(false);
+    }
+  }, [activeView, pickerBrief, pickerLoading]);
 
   async function loadDashboard(forceRefresh: boolean) {
     setError(null);
@@ -464,8 +528,8 @@ function App() {
     }
   }
 
-  async function sendChat(question = chatInput.trim()) {
-    if (!question || !fundData) return;
+  async function sendChat(question = chatInput.trim()): Promise<string | null> {
+    if (!question || !fundData) return null;
     setChatError(null);
     const nextMessages: ChatMessage[] = [...chatMessages, { role: 'user', content: question }];
     setChatMessages(nextMessages);
@@ -485,14 +549,17 @@ function App() {
       if (!response.ok || payload.meta?.status === 'configuration_required' || payload.meta?.status === 'upstream_error') {
         setChatError(content);
         setChatMessages([...nextMessages, { role: 'assistant', content: `AI协作暂不可用：${content}` }]);
-        return;
+        return `AI协作暂不可用：${content}`;
       }
       setChatMessages([...nextMessages, { role: 'assistant', content }]);
+      return content;
     } catch (err) {
+      const content = `聊天接口暂不可用：${err instanceof Error ? err.message : '未知错误'}`;
       setChatMessages([
         ...nextMessages,
-        { role: 'assistant', content: `聊天接口暂不可用：${err instanceof Error ? err.message : '未知错误'}` }
+        { role: 'assistant', content }
       ]);
+      return content;
     } finally {
       setChatLoading(false);
     }
@@ -536,6 +603,22 @@ function App() {
       setHoldingError(err instanceof Error ? err.message : '重仓股涨跌加载失败');
     } finally {
       setHoldingLoading(false);
+    }
+  }
+
+  async function loadFundPickerBrief(forceRefresh: boolean) {
+    setPickerError(null);
+    setPickerLoading(true);
+    try {
+      const payload = await requestJson<FundPickerBriefResponse>(
+        forceRefresh ? '/api/fund-picker/brief/refresh' : '/api/fund-picker/brief',
+        forceRefresh ? 'POST' : 'GET'
+      );
+      setPickerBrief(payload);
+    } catch (err) {
+      setPickerError(err instanceof Error ? err.message : '选基决策摘要加载失败');
+    } finally {
+      setPickerLoading(false);
     }
   }
 
@@ -596,10 +679,15 @@ function App() {
               <RefreshCw size={18} className={refreshing ? 'spin' : ''} />
               {refreshing ? '刷新中' : '刷新市场与基金'}
             </button>
-          ) : (
+          ) : activeView === 'holdings' ? (
             <button className="primary-button" onClick={() => loadHoldingsPerformance(true)} disabled={holdingLoading}>
               <RefreshCw size={18} className={holdingLoading ? 'spin' : ''} />
-              {holdingLoading ? '刷新中' : activeView === 'picker' ? '刷新选基样本' : '刷新重仓股'}
+              {holdingLoading ? '刷新中' : '刷新重仓股'}
+            </button>
+          ) : (
+            <button className="primary-button" onClick={() => loadFundPickerBrief(true)} disabled={pickerLoading}>
+              <RefreshCw size={18} className={pickerLoading ? 'spin' : ''} />
+              {pickerLoading ? '刷新中' : '刷新选基摘要'}
             </button>
           )}
         </div>
@@ -611,7 +699,7 @@ function App() {
       {activeView === 'holdings' ? (
         <HoldingsPerformancePage data={holdingData} loading={holdingLoading} error={holdingError} />
       ) : activeView === 'picker' ? (
-        <FundPickerPage data={holdingData} loading={holdingLoading} error={holdingError} />
+        <FundPickerPage brief={pickerBrief} loading={pickerLoading} error={pickerError} onAskAI={sendChat} />
       ) : (
         <>
 
@@ -822,163 +910,341 @@ function HoldingsPerformancePage({
 }
 
 function FundPickerPage({
-  data,
+  brief,
   loading,
-  error
+  error,
+  onAskAI
 }: {
-  data: HoldingPerformanceResponse | null;
+  brief: FundPickerBriefResponse | null;
   loading: boolean;
   error: string | null;
+  onAskAI: (question: string) => Promise<string | null>;
 }) {
-  const stocks = data?.stocks ?? [];
-  const segments = buildPickerSegments(stocks);
-  const segmentMedianOneMonth = median(segments.map((item) => item.avg.oneMonth).filter(isNumber));
-  const laggards = segments.filter((item) => isRelativeLaggard(item, segmentMedianOneMonth));
-  const overheated = segments.filter((item) => (item.avg.oneMonth ?? 0) >= 30 || (item.avg.threeMonths ?? 0) >= 80);
-  const stages = ['上游', '中游', '下游', '应用/平台', '交叉/待分类'] as const;
+  const [showEvidence, setShowEvidence] = React.useState(false);
 
   return (
-    <section className="picker-page">
-      <div className="holding-source-alert">
-        <Database size={16} />
-        <span>
-          {data
-            ? `选基样本来自你已买基金披露的前十大持仓，股票行情源：${formatSourceBreakdown(data)}；缓存时间 ${data.meta.refreshedAt || '暂无'}。这不是全市场半导体股票池，也不是买卖指令。`
-            : '等待读取重仓股样本，用来拆解半导体上游、中游、下游板块。'}
-        </span>
-      </div>
+    <section className="picker-page agentic-picker">
       {error && <div className="alert error">选基样本加载失败：{error}</div>}
-      {loading && <div className="chart-placeholder">正在读取半导体产业链样本...</div>}
-      {!loading && data && (
+      {loading && <div className="chart-placeholder">正在运行 Data Check Agent 和选基规则...</div>}
+      {!loading && !brief && !error && <div className="chart-placeholder">等待生成选基决策摘要...</div>}
+      {!loading && brief && (
         <>
-          <section className="kpi-grid holding-kpis">
-            <MetricCard icon={<BrainCircuit />} label="产业链板块" value={`${segments.length} 个`} note="按上游/中游/下游重新组织" />
-            <MetricCard
-              icon={<Activity />}
-              label="低热度待复核线索"
-              value={`${laggards.length} 个`}
-              note="近1月低于样本中位数，需继续复核"
-            />
-            <MetricCard icon={<ShieldAlert />} label="偏热观察" value={`${overheated.length} 个`} note="短期涨幅高，适合看回撤和分批纪律" />
-            <MetricCard
-              icon={<Database />}
-              label="样本覆盖"
-              value={`${data.meta.coverage.ok}/${data.meta.coverage.total}`}
-              note="只覆盖公开接口可映射股票"
-            />
-          </section>
+          <DataCheckPanel brief={brief} />
 
-          <section className="picker-method">
+          <section className="agent-summary-card">
             <div>
-              <h2>一个更稳的“低热度”选基框架</h2>
-              <p>
-                低涨幅不是自动便宜。这里先用公开股票样本做板块温度计，再结合趋势确认、基金规模、费率、基金经理、最大回撤、估值和个人仓位预算，帮助你决定哪些主题值得进一步研究。
-              </p>
+              <p className="eyebrow">Briefing Agent</p>
+              <h2>今日决策摘要</h2>
             </div>
-            <div className="strategy-grid">
-              <StrategyCard title="低热度线索" value="1月低于中位数" text="只进入待复核清单，不代表低估；再看3月趋势、估值和基金质量。" />
-              <StrategyCard title="趋势确认" value="3月不塌" text="1月没涨、3月也持续走弱，往往不是低估，而可能是景气度或资金偏好转弱。" />
-              <StrategyCard title="防追涨" value="1月>30%警惕" text="短期涨幅过高时，不用急着追；优先等回撤、看仓位上限和风险预算。" />
-              <StrategyCard title="数据纪律" value="看披露日期" text="基金前十大持仓是季报口径，不能当成实时仓位，也不能合成基金收益。" />
-            </div>
+            <p>{brief.summary}</p>
           </section>
 
-          <div className="stage-stack">
-            {stages.map((stage) => {
-              const items = segments.filter((item) => item.stage === stage);
-              if (!items.length) return null;
-              return (
-                <section className="stage-section" key={stage}>
-                  <div className="stage-heading">
-                    <div>
-                      <h2>{stage}</h2>
-                      <p>{stageDescription(stage)}</p>
-                    </div>
-                    <span>{items.length} 个板块</span>
-                  </div>
-                  <div className="segment-grid">
-                    {items.map((segment) => (
-                      <SegmentCard key={segment.category} segment={segment} segmentMedianOneMonth={segmentMedianOneMonth} />
-                    ))}
-                  </div>
-                </section>
-              );
-            })}
-          </div>
+          <DecisionDeck cards={brief.decisionCards} />
+
+          <AskAIPanel brief={brief} onAskAI={onAskAI} />
+
+          <section className="evidence-toggle-card">
+            <div>
+              <p className="eyebrow">Audit Trail</p>
+              <h2>展开依据</h2>
+              <p>默认隐藏底层板块和股票样本，需要复核时再打开。</p>
+            </div>
+            <button className="primary-button" onClick={() => setShowEvidence((value) => !value)}>
+              {showEvidence ? '收起依据' : '展开依据'}
+            </button>
+          </section>
+
+          {showEvidence && <EvidencePanel brief={brief} />}
         </>
       )}
     </section>
   );
 }
 
-function StrategyCard({ title, value, text }: { title: string; value: string; text: string }) {
+function DataCheckPanel({ brief }: { brief: FundPickerBriefResponse }) {
+  const check = brief.dataCheck;
   return (
-    <article className="strategy-card">
-      <b>{title}</b>
-      <strong>{value}</strong>
-      <p>{text}</p>
+    <section className={`data-check-card ${check.status}`}>
+      <div className="agent-card-header">
+        <div>
+          <p className="eyebrow">Data Check Agent</p>
+          <h2>{check.statusLabel}</h2>
+        </div>
+        <span>{check.allowDecision ? '允许生成研究线索' : '不生成判断'}</span>
+      </div>
+      <p>{check.message} 本页只使用已披露前十大持仓样本，不代表全市场基金结论。</p>
+      <div className="agent-status-grid">
+        <div>
+          <span>行情覆盖</span>
+          <b>
+            {check.coverage.ok}/{check.coverage.total}
+          </b>
+          <small>{check.coverageRatio ?? 0}%</small>
+        </div>
+        <div>
+          <span>降级来源</span>
+          <b>{check.fallbackCount}</b>
+          <small>{formatSourceList(brief.meta.sourceBreakdown ?? check.sourceBreakdown ?? [])}</small>
+        </div>
+        <div>
+          <span>阻断板块</span>
+          <b>{check.blockedSegments}</b>
+          <small>交叉分类、样本过小或行情覆盖不足的板块不会进入行动卡。</small>
+        </div>
+        <div>
+          <span>缓存时间</span>
+          <b>{check.cacheTime || brief.meta.refreshedAt || '暂无'}</b>
+          <small>{brief.meta.caveat}</small>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function DecisionDeck({ cards }: { cards: PickerDecisionCard[] }) {
+  return (
+    <section className="decision-deck" aria-label="选基决策卡">
+      {cards.map((card) => (
+        <DecisionCard key={card.type} card={card} />
+      ))}
+    </section>
+  );
+}
+
+function DecisionCard({ card }: { card: PickerDecisionCard }) {
+  const funds = card.relatedFunds.map((fund) => `${fund.code}${fund.weight !== null ? ` ${formatPercent(fund.weight)}` : ''}`).join(' / ');
+  return (
+    <article className={`decision-card ${card.type}`}>
+      <header>
+        <div>
+          <p className="eyebrow">{card.type === 'hold' ? 'Risk Governor Agent' : card.type === 'review' ? 'Fund Match Agent' : 'Sector Scout Agent'}</p>
+          <h2>{card.title}</h2>
+        </div>
+        <span>{card.sectors.length} 个线索</span>
+      </header>
+      <strong>{card.conclusion}</strong>
+      <p>{card.reason}</p>
+      {card.sectors.length > 0 && (
+        <div className="decision-sector-list">
+          {card.sectors.map((sector) => (
+            <div key={`${card.type}-${sector.category}`}>
+              <span>{sector.category}</span>
+              <b className={toneClass(sector.oneMonth)}>{formatPercent(sector.oneMonth)}</b>
+              <small>
+                {sector.stage} · 样本 {sector.coverageOk}/{sector.sampleCount}
+              </small>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="decision-footer">
+        <span>{funds || '暂无关联基金样本'}</span>
+        <small>{card.guardrail}</small>
+      </div>
     </article>
   );
 }
 
-function SegmentCard({ segment, segmentMedianOneMonth }: { segment: PickerSegment; segmentMedianOneMonth: number | null }) {
-  const status = segmentStatus(segment, segmentMedianOneMonth);
-  const fundText = segment.funds.slice(0, 4).map((item) => `${item.code} ${formatPercent(item.weight)}`).join(' / ') || '暂无基金映射';
+function AskAIPanel({ brief, onAskAI }: { brief: FundPickerBriefResponse; onAskAI: (question: string) => Promise<string | null> }) {
+  const [question, setQuestion] = React.useState('');
+  const [answer, setAnswer] = React.useState<string | null>(null);
+  const [asking, setAsking] = React.useState(false);
+  const quick = brief.decisionCards.map((card) => card.nextQuestion).filter(Boolean).slice(0, 3);
+
+  async function submit(value = question.trim()) {
+    if (!value) return;
+    setAsking(true);
+    const context = {
+      summary: brief.summary,
+      dataCheck: brief.dataCheck,
+      decisionCards: brief.decisionCards.map((card) => ({
+        title: card.title,
+        conclusion: card.conclusion,
+        reason: card.reason,
+        sectors: card.sectors,
+        relatedFunds: card.relatedFunds
+      })),
+      riskFlags: brief.riskFlags,
+      sourceBreakdown: brief.meta.sourceBreakdown,
+      refreshedAt: brief.dataCheck.cacheTime || brief.meta.refreshedAt || null
+    };
+    const response = await onAskAI(
+      `选基板块问题：${value}\n请只基于下面的选基页上下文回答，明确数据日期和非投资建议边界，不生成下单金额。\n${JSON.stringify(context, null, 2)}`
+    );
+    setAnswer(response);
+    setQuestion('');
+    setAsking(false);
+  }
 
   return (
-    <article className={`segment-card ${status.tone}`}>
+    <section className="ask-ai-card">
+      <div>
+        <p className="eyebrow">下一步问 AI</p>
+        <h2>把复核问题交给 AI 压缩</h2>
+        <p>AI 会带着当前摘要继续分析，但不会生成下单金额或交易指令。</p>
+      </div>
+      <div className="ask-ai-actions">
+        <div className="quick-list">
+          {quick.map((item) => (
+            <button key={item} onClick={() => submit(item)}>
+              {item}
+            </button>
+          ))}
+        </div>
+        <form
+          className="chat-form compact"
+          onSubmit={(event) => {
+            event.preventDefault();
+            submit();
+          }}
+        >
+          <input value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="例如：哪只基金适合先做研究？" />
+          <button type="submit" disabled={asking}>
+            <Send size={16} />
+            {asking ? '等待' : '发送'}
+          </button>
+        </form>
+        {answer && (
+          <div className="picker-ai-answer">
+            <ReactMarkdown>{answer}</ReactMarkdown>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function EvidencePanel({ brief }: { brief: FundPickerBriefResponse }) {
+  const [expandedCategory, setExpandedCategory] = React.useState<string | null>(null);
+  const stages: FundPickerStage[] = ['上游', '中游', '下游', '应用/平台', '交叉/待分类'];
+
+  return (
+    <section className="evidence-panel">
+      <div className="risk-flag-grid">
+        {brief.riskFlags.map((flag) => (
+          <article className={`risk-flag ${flag.level}`} key={`${flag.title}-${flag.text}`}>
+            <b>{flag.title}</b>
+            <p>{flag.text}</p>
+          </article>
+        ))}
+      </div>
+      {stages.map((stage) => {
+        const items = brief.sectorFindings.filter((item) => item.stage === stage).slice(0, 3);
+        if (!items.length) return null;
+        return (
+          <section className="sector-brief-section" key={stage}>
+            <div className="stage-heading">
+              <div>
+                <h2>{stage}</h2>
+                <p>{stageDescription(stage)}</p>
+              </div>
+              <span>Top {items.length}</span>
+            </div>
+            <div className="sector-brief-grid">
+              {items.map((sector) => (
+                <SectorBriefCard
+                  key={sector.category}
+                  sector={sector}
+                  expanded={expandedCategory === sector.category}
+                  onToggle={() => setExpandedCategory((current) => (current === sector.category ? null : sector.category))}
+                />
+              ))}
+            </div>
+          </section>
+        );
+      })}
+      <div className="audit-list">
+        <h3>Agent 协作记录</h3>
+        {brief.auditTrail.map((item) => (
+          <p key={item}>{item}</p>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function SectorBriefCard({
+  sector,
+  expanded,
+  onToggle
+}: {
+  sector: PickerSectorFinding;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const status = sectorStatusText(sector.status);
+  return (
+    <article className={`sector-brief-card ${sector.status}`}>
       <header>
         <div>
-          <h3>{segment.category}</h3>
-          <p>{segment.description}</p>
+          <h3>{sector.category}</h3>
+          <p>{sector.description}</p>
         </div>
-        <span>{status.label}</span>
+        <span>{status}</span>
       </header>
       <div className="segment-metrics">
         <div>
-          <span>股票1月均值</span>
-          <b className={toneClass(segment.avg.oneMonth)}>{formatPercent(segment.avg.oneMonth)}</b>
+          <span>1月均值</span>
+          <b className={toneClass(sector.avg.oneMonth)}>{formatPercent(sector.avg.oneMonth)}</b>
         </div>
         <div>
-          <span>股票3月均值</span>
-          <b className={toneClass(segment.avg.threeMonths)}>{formatPercent(segment.avg.threeMonths)}</b>
+          <span>3月均值</span>
+          <b className={toneClass(sector.avg.threeMonths)}>{formatPercent(sector.avg.threeMonths)}</b>
         </div>
         <div>
-          <span>股票1年均值</span>
-          <b className={toneClass(segment.avg.oneYear)}>{formatPercent(segment.avg.oneYear)}</b>
+          <span>1年均值</span>
+          <b className={toneClass(sector.avg.oneYear)}>{formatPercent(sector.avg.oneYear)}</b>
         </div>
         <div>
-          <span>样本披露权重合计</span>
-          <b>{formatPercent(segment.totalWeight)}</b>
+          <span>披露权重</span>
+          <b>{formatPercent(sector.sampleWeightTotal)}</b>
         </div>
-      </div>
-      <div className="segment-note">{status.text}</div>
-      <div className="segment-funds">
-        <b>关联基金样本</b>
-        <span>{fundText}</span>
-      </div>
-      <div className="segment-stock-list">
-        {segment.stocks.slice(0, 5).map((stock) => (
-          <div key={`${segment.category}-${stock.stockCode}`}>
-            <span>
-              <b>{stock.stockName}</b>
-              <small>{stock.stockCode} · {stock.market}</small>
-            </span>
-            <em className={toneClass(stock.returns.oneMonth)}>{formatPercent(stock.returns.oneMonth)}</em>
-            <em className={toneClass(stock.returns.threeMonths)}>{formatPercent(stock.returns.threeMonths)}</em>
-          </div>
-        ))}
       </div>
       <p className="source-note">
-        样本 {segment.stocks.length} 只，行情覆盖 {segment.coverage.ok}/{segment.coverage.total}；权重是跨基金前十大披露权重相加，不代表你的组合仓位；均值为可得股票简单平均，不代表基金收益。
+        行情覆盖 {sector.coverage.ok}/{sector.coverage.total}；关联基金：{sector.relatedFunds.slice(0, 4).map((fund) => `${fund.code} ${formatPercent(fund.weight)}`).join(' / ') || '暂无'}。
       </p>
+      <button className="text-button" onClick={onToggle}>
+        {expanded ? '收起股票样本' : '查看股票样本'}
+      </button>
+      {expanded && (
+        <div className="sector-samples">
+          {sector.sampleStocks.map((stock) => (
+            <div key={`${sector.category}-${stock.code}`}>
+              <span>
+                <b>{stock.name}</b>
+                <small>
+                  {stock.code} · {stock.market} · {sourceDisplayName(stock.source)}
+                </small>
+              </span>
+              <em className={toneClass(stock.oneMonth)}>{formatPercent(stock.oneMonth)}</em>
+              <em className={toneClass(stock.threeMonths)}>{formatPercent(stock.threeMonths)}</em>
+            </div>
+          ))}
+        </div>
+      )}
     </article>
   );
+}
+
+function sectorStatusText(status: PickerSectorFinding['status']) {
+  if (status === 'blocked') return '不判断';
+  if (status === 'excluded') return '仅观察';
+  if (status === 'small_sample') return '小样本';
+  if (status === 'data_insufficient') return '数据不足';
+  if (status === 'hot') return '暂缓追高';
+  if (status === 'review') return '待复核';
+  if (status === 'weak_trend') return '趋势待确认';
+  return '观察';
 }
 
 function formatSourceBreakdown(data: HoldingPerformanceResponse) {
   const items = data.meta.sourceBreakdown || [];
   if (!items.length) return data.meta.sourceLabel;
+  return items.map((item) => `${sourceDisplayName(item.source)} ${item.count}只`).join(' / ');
+}
+
+function formatSourceList(items: Array<{ source: string; count: number }>) {
+  if (!items.length) return '暂无来源拆分';
   return items.map((item) => `${sourceDisplayName(item.source)} ${item.count}只`).join(' / ');
 }
 
@@ -1025,112 +1291,12 @@ function categoryDescription(category: string) {
   return '暂按持仓名称和代码映射，后续可细分到上游/中游/下游';
 }
 
-function buildPickerSegments(stocks: HoldingPerformanceStock[]): PickerSegment[] {
-  const grouped = stocks.reduce<Record<string, HoldingPerformanceStock[]>>((acc, stock) => {
-    const key = stock.chainCategory || '其它/待分类';
-    acc[key] = [...(acc[key] ?? []), stock];
-    return acc;
-  }, {});
-
-  return Object.entries(grouped)
-    .map(([category, items]) => {
-      const funds = aggregateSegmentFunds(items);
-      return {
-        category,
-        stage: stageForCategory(category),
-        description: categoryDescription(category),
-        stocks: [...items].sort((left, right) => (right.totalWeight ?? 0) - (left.totalWeight ?? 0)),
-        totalWeight: groupWeight(items),
-        avg: {
-          oneMonth: averageReturn(items, 'oneMonth'),
-          threeMonths: averageReturn(items, 'threeMonths'),
-          oneYear: averageReturn(items, 'oneYear')
-        },
-        coverage: {
-          total: items.length,
-          ok: items.filter((item) => item.dataStatus === 'ok').length
-        },
-        funds
-      };
-    })
-    .sort((left, right) => stageRank(left.stage) - stageRank(right.stage) || (right.totalWeight ?? 0) - (left.totalWeight ?? 0));
-}
-
-function stageForCategory(category: string): PickerSegment['stage'] {
-  if (/其它|待分类|电力设备|高端制造/.test(category)) return '交叉/待分类';
-  if (/CPO|光通信|PCB|终端|服务器链|电子制造|光学/.test(category)) return '下游';
-  if (/存储|AI芯片|芯片设计|晶圆制造|算力芯片|存储接口|SoC|IP/.test(category)) return '中游';
-  if (/设备|材料|玻纤/.test(category)) return '上游';
-  if (/平台|互联网|广告/.test(category)) return '应用/平台';
-  return '交叉/待分类';
-}
-
-function stageDescription(stage: PickerSegment['stage']) {
+function stageDescription(stage: FundPickerStage) {
   if (stage === '上游') return '更偏“卖铲子”：设备、材料、零部件，受扩产周期和国产替代影响。';
   if (stage === '中游') return '更偏芯片本体：设计、制造、存储、AI算力芯片，弹性大但波动也大。';
   if (stage === '下游') return '更贴近AI服务器和终端应用：光通信、PCB、电子制造，常跟算力建设节奏同步。';
   if (stage === '应用/平台') return '更偏互联网、云和平台生态，不是纯半导体，但会受AI应用景气影响。';
   return '横跨多个产业或暂未分类，不作为直接选基判断，只做线索保存。';
-}
-
-function stageRank(stage: PickerSegment['stage']) {
-  return ['上游', '中游', '下游', '应用/平台', '交叉/待分类'].indexOf(stage);
-}
-
-function averageReturn(stocks: HoldingPerformanceStock[], key: 'oneMonth' | 'threeMonths' | 'oneYear') {
-  const values = stocks.map((stock) => stock.returns[key]).filter(isNumber);
-  if (!values.length) return null;
-  return Number((values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(2));
-}
-
-function aggregateSegmentFunds(stocks: HoldingPerformanceStock[]) {
-  const byFund = new Map<string, number>();
-  for (const stock of stocks) {
-    for (const fund of stock.funds) {
-      byFund.set(fund.code, Number(((byFund.get(fund.code) ?? 0) + (fund.weight ?? 0)).toFixed(2)));
-    }
-  }
-  return [...byFund.entries()]
-    .map(([code, weight]) => ({ code, weight }))
-    .sort((left, right) => (right.weight ?? 0) - (left.weight ?? 0));
-}
-
-function segmentStatus(segment: PickerSegment, medianOneMonth: number | null) {
-  if (segment.stage === '交叉/待分类') {
-    return { label: '待分类', tone: 'neutral', text: '这个板块横跨多个产业或分类不明，只保存为观察线索，不进入选基状态判断。' };
-  }
-  if (segment.coverage.ok < Math.ceil(segment.coverage.total * 0.5)) {
-    return { label: '数据不足', tone: 'neutral', text: '公开行情覆盖不足，先不要用这个板块做选基判断。' };
-  }
-  if (segment.coverage.total === 1) {
-    return { label: '小样本', tone: 'neutral', text: '这个板块只有1只样本股，适合做线索，不适合单独代表整个产业环节。' };
-  }
-  if ((segment.avg.oneMonth ?? 0) >= 30 || (segment.avg.threeMonths ?? 0) >= 80) {
-    return { label: '偏热观察', tone: 'warm', text: '短期涨幅较高，更适合观察回撤、估值消化和仓位上限，不适合机械追涨。' };
-  }
-  if (isRelativeLaggard(segment, medianOneMonth)) {
-    return { label: '待复核线索', tone: 'cool', text: '近1月相对没那么热，且3月趋势没有明显走坏；这不是低估判断，需再看基金规模、费率、经理、回撤、估值和个人仓位。' };
-  }
-  if ((segment.avg.oneMonth ?? 0) < 0 && (segment.avg.threeMonths ?? 0) < 0) {
-    return { label: '趋势待确认', tone: 'neutral', text: '短中期同时偏弱，可能不是便宜，而是景气或资金偏好变弱。' };
-  }
-  return { label: '正常观察', tone: 'neutral', text: '涨跌处在样本中间区域，适合作为组合暴露对照，不急于下判断。' };
-}
-
-function isRelativeLaggard(segment: PickerSegment, medianOneMonth: number | null) {
-  if (medianOneMonth === null || segment.avg.oneMonth === null) return false;
-  return segment.avg.oneMonth < medianOneMonth && (segment.avg.threeMonths ?? -999) >= 0;
-}
-
-function median(values: number[]) {
-  if (!values.length) return null;
-  const sorted = [...values].sort((left, right) => left - right);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[mid] : Number(((sorted[mid - 1] + sorted[mid]) / 2).toFixed(2));
-}
-
-function isNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value);
 }
 
 function isPriorityHoldingReturn(key: HoldingReturnKey) {
